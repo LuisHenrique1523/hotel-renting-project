@@ -1,0 +1,38 @@
+# Blueprint do Render: um clique em "New > Blueprint" cria o serviço a partir deste arquivo.
+# A cada `git push` na branch main o site é reconstruído e publicado automaticamente.
+services:
+  - type: web
+    name: aurora-hotel-spa
+    runtime: docker
+    plan: free
+    region: virginia
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /up
+    envVars:
+      - key: APP_NAME
+        value: Aurora Hotel & Spa
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_LOCALE
+        value: pt_BR
+      - key: APP_FAKER_LOCALE
+        value: pt_BR
+      - key: DB_CONNECTION
+        value: sqlite
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: sync
+      - key: MAIL_MAILER
+        value: log
+      - key: MAIL_FROM_ADDRESS
+        value: reservas@aurora.test
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: HOTEL_DEMO
+        value: "true"

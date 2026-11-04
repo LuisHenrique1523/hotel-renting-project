@@ -1,0 +1,99 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/playfair-display/600.css';
+
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@config 'tailwind.config.js';
+
+/* ── Identidade Aurora no painel ───────────────────────────── */
+
+.fi-body {
+    @apply bg-sand-50 dark:bg-night-950;
+}
+
+/* Logo: escuro sobre fundo claro (login), claro na barra lateral e no modo escuro */
+.aurora-brand-word { @apply text-night-900 dark:text-white; }
+.aurora-brand-line { stroke: #0F1E33; }
+.dark .aurora-brand-line,
+.fi-sidebar .aurora-brand-line { stroke: #E9DCC9; }
+.fi-sidebar .aurora-brand-word { @apply text-white; }
+
+/* Barra lateral azul-noite */
+.fi-sidebar {
+    @apply bg-night-900 dark:bg-night-950;
+}
+.fi-sidebar-header {
+    @apply bg-night-900 ring-0 shadow-none dark:bg-night-950 lg:bg-night-900;
+}
+.fi-sidebar .fi-sidebar-group-label,
+.fi-sidebar .fi-sidebar-group-collapse-button {
+    @apply text-night-300;
+}
+.fi-sidebar .fi-sidebar-item-label {
+    @apply text-sand-200;
+}
+.fi-sidebar .fi-sidebar-item-icon {
+    @apply text-night-300;
+}
+.fi-sidebar .fi-sidebar-item a:hover,
+.fi-sidebar .fi-sidebar-item button:hover {
+    @apply bg-white/5;
+}
+.fi-sidebar .fi-sidebar-item-active a {
+    @apply bg-gold-500/15;
+}
+.fi-sidebar .fi-sidebar-item-active .fi-sidebar-item-label,
+.fi-sidebar .fi-sidebar-item-active .fi-sidebar-item-icon {
+    @apply text-gold-300;
+}
+.fi-sidebar .fi-sidebar-item-badge-ctn .fi-badge {
+    @apply ring-0;
+}
+.fi-sidebar-nav {
+    @apply pt-6;
+}
+
+/* Títulos com a fonte serifada da marca */
+.fi-header-heading,
+.fi-simple-header-heading,
+.fi-wi-stats-overview-stat-value,
+.fi-section-header-heading {
+    font-family: 'Playfair Display', serif;
+    letter-spacing: -0.01em;
+}
+.fi-header-heading {
+    @apply text-3xl;
+}
+
+/* Login com fundo da marca */
+.fi-simple-layout {
+    background: radial-gradient(ellipse at top, rgba(200, 161, 90, 0.18), transparent 60%), #0F1E33;
+}
+.fi-simple-main {
+    @apply rounded-3xl;
+}
+
+/* Calendário */
+.fc .fc-toolbar-title {
+    font-family: 'Playfair Display', serif;
+}
+.fc .fc-button-primary {
+    @apply border-night-200 bg-white text-night-700 shadow-sm hover:bg-sand-100 dark:border-white/10 dark:bg-white/5 dark:text-gray-200;
+}
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+    @apply border-night-900 bg-night-900 text-white;
+}
+.fc .fc-event {
+    @apply cursor-pointer rounded-md border-0 px-1 text-[0.72rem] font-medium shadow-sm;
+}
+.fc .ev-pending {
+    opacity: 0.65;
+    background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255, 255, 255, 0.25) 4px, rgba(255, 255, 255, 0.25) 8px);
+}
+.fc .fc-day-today {
+    background: rgba(200, 161, 90, 0.08) !important;
+}

@@ -1,0 +1,16 @@
+<?php
+
+namespace App\Filament\Resources\ProfessionalResource\Pages;
+
+use App\Filament\Resources\ProfessionalResource;
+use Filament\Resources\Pages\EditRecord;
+
+class EditProfessional extends EditRecord
+{
+    protected static string $resource = ProfessionalResource::class;
+
+    protected function getHeaderActions(): array
+    {
+        return [\Filament\Actions\DeleteAction::make()];
+    }
+}

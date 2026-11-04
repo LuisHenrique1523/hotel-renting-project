@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: Testes (PHPUnit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: intl, zip, pdo_sqlite
+          coverage: none
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Dependências
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress
+          npm ci --no-audit --no-fund
+
+      - name: Build do front-end
+        run: npm run build
+
+      - name: Testes
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test
+
+  docker:
+    name: Build da imagem Docker
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t aurora-hotel-spa .
+      - name: Sobe o contêiner e testa a home
+        run: |
+          docker run -d --name aurora -p 8080:10000 -e APP_ENV=production -e DB_CONNECTION=sqlite -e HOTEL_DEMO=true -e LOG_CHANNEL=stderr -e SESSION_DRIVER=database -e CACHE_STORE=database aurora-hotel-spa
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/up > /dev/null; then break; fi
+            sleep 2
+          done
+          docker logs aurora | tail -20
+          curl -fsS -o /dev/null -w "home: %{http_code}\n" http://localhost:8080/
+          curl -fsS -o /dev/null -w "quartos: %{http_code}\n" http://localhost:8080/quartos
+          curl -fsS -o /dev/null -w "spa: %{http_code}\n" http://localhost:8080/spa/massagem-relaxante
+          curl -fsS -o /dev/null -w "login: %{http_code}\n" http://localhost:8080/login
+          curl -fsS -o /dev/null -w "admin login: %{http_code}\n" http://localhost:8080/admin/login
