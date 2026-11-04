@@ -1,5 +1,8 @@
 # Aurora Hotel & Spa: sistema de agendamento e reservas
 
+[![CI](https://github.com/LuisHenrique1523/hotel-renting-project/actions/workflows/ci.yml/badge.svg)](https://github.com/LuisHenrique1523/hotel-renting-project/actions/workflows/ci.yml)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/LuisHenrique1523/hotel-renting-project)
+
 Trabalho Avaliativo 3 de **Programação de Sistemas Web** (Afya, prof. Gabriel Cardoso), **Equipe 5**.
 Tema: *Sistema de Agendamento e Reservas (Salas ou Profissionais)*.
 
@@ -61,6 +64,23 @@ Na tela de login há atalhos que preenchem essas contas (só no ambiente local).
 
 ### Antes da apresentação
 `php artisan migrate:fresh --seed` recria os dados **relativos à data de hoje**. Assim, o dashboard, o calendário e o mapa de quartos sempre aparecem cheios e com vagas livres para a demo.
+
+---
+
+## Site na internet (Render)
+
+O GitHub guarda o código e o [Render](https://render.com) publica o site. A cada `git push` na `main`, o GitHub Actions roda os testes e o build Docker, e o Render reconstrói e publica sozinho.
+
+**Configuração (uma vez só):**
+1. Entre em render.com com a conta do GitHub.
+2. Clique no botão **Deploy to Render** acima. Ou, no Render, use **New → Blueprint** e escolha este repositório.
+3. Confirme. O `render.yaml` já traz todas as configurações.
+4. Em cerca de 5 minutos o site fica no ar em `https://aurora-hotel-spa.onrender.com` (ou um nome parecido, se este estiver ocupado).
+
+**Como funciona no plano gratuito:**
+- **Imagem e banco:** a imagem (`Dockerfile`) usa PHP 8.2 + Apache, e o banco é **SQLite**, recriado com os dados de demonstração a cada inicialização. O site sempre começa limpo e com datas relativas ao dia.
+- **Hibernação:** depois de 15 minutos sem acesso, o serviço hiberna. O primeiro acesso seguinte leva cerca de 1 minuto e recria os dados. **Abra o site uns 2 minutos antes de apresentar.**
+- **Contas de demo:** como é uma demonstração pública, as contas aparecem na tela de login (variável `HOTEL_DEMO`). Qualquer alteração feita por visitantes some na próxima reinicialização.
 
 ---
 
