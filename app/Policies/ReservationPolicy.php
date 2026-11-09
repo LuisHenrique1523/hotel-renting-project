@@ -7,20 +7,18 @@ use App\Models\User;
 
 /**
  * Quem pode ver e mexer em cada reserva.
- * Usada tanto no site (hóspede) quanto no painel Filament (equipe e profissionais).
+ * Usada tanto no site (cliente) quanto no painel Filament (recepção e administração).
  */
 class ReservationPolicy
 {
     public function viewAny(User $user): bool
     {
-        return true; // cada tela filtra pelo escopo do usuário
+        return $user->isStaff();
     }
 
     public function view(User $user, Reservation $reservation): bool
     {
-        return $reservation->user_id === $user->id
-            || $user->isStaff()
-            || $this->isAssignedProfessional($user, $reservation);
+        return $reservation->user_id === $user->id || $user->isStaff();
     }
 
     public function create(User $user): bool
@@ -28,7 +26,7 @@ class ReservationPolicy
         return $user->isStaff();
     }
 
-    /** Hóspede só paga a própria reserva. */
+    /** Cliente só paga a própria reserva. */
     public function pay(User $user, Reservation $reservation): bool
     {
         return $reservation->user_id === $user->id;
@@ -39,10 +37,10 @@ class ReservationPolicy
         return $reservation->user_id === $user->id || $user->isStaff();
     }
 
-    /** Operações de balcão: confirmar, check-in, check-out. */
+    /** Operações de balcão: confirmar, check-in, conclusão. */
     public function operate(User $user, Reservation $reservation): bool
     {
-        return $user->isStaff() || $this->isAssignedProfessional($user, $reservation);
+        return $user->isStaff();
     }
 
     public function update(User $user, Reservation $reservation): bool
@@ -53,12 +51,5 @@ class ReservationPolicy
     public function delete(User $user, Reservation $reservation): bool
     {
         return $user->isAdmin();
-    }
-
-    private function isAssignedProfessional(User $user, Reservation $reservation): bool
-    {
-        return $user->isProfessional()
-            && $reservation->reservable_type === Reservation::KIND_PROFESSIONAL
-            && $reservation->reservable_id === $user->professional?->id;
     }
 }

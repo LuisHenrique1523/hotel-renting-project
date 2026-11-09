@@ -10,14 +10,14 @@ use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
- * Reage aos eventos do motor de reservas enviando e-mail ao hóspede.
+ * Reage aos eventos do motor de reservas enviando e-mail ao cliente.
  * O motor não conhece e-mail: o desacoplamento é feito pelo evento.
  */
 class SendReservationEmail
 {
     public function handle(ReservationConfirmed|ReservationCancelled $event): void
     {
-        $reservation = $event->reservation->loadMissing('user', 'reservable', 'service');
+        $reservation = $event->reservation->loadMissing('user', 'space.unit', 'space.category');
         $kind = $event instanceof ReservationConfirmed ? 'confirmed' : 'cancelled';
 
         try {

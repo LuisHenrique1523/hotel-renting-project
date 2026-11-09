@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\Unit;
 use Filament\Pages\Page;
 
 class Calendar extends Page
@@ -13,20 +14,26 @@ class Calendar extends Page
     protected static ?string $title = 'Calendário de reservas';
     protected static string $view = 'filament.pages.calendar';
 
-    public string $kind = 'professional';
+    /** Unidade filtrada (null = todas). */
+    public ?int $unit = null;
+
+    public static function canAccess(): bool
+    {
+        return (bool) auth()->user()?->isStaff();
+    }
 
     public function mount(): void
     {
-        // Profissional só tem agenda de atendimentos
-        if (auth()->user()->isProfessional()) {
-            $this->kind = 'professional';
-        }
+        $this->unit = Unit::active()->orderBy('city')->orderBy('name')->value('id');
     }
 
-    public function setKind(string $kind): void
+    public function setUnit(?int $unit): void
     {
-        if (in_array($kind, ['professional', 'space', 'room', 'all'], true)) {
-            $this->kind = $kind;
-        }
+        $this->unit = $unit;
+    }
+
+    protected function getViewData(): array
+    {
+        return ['units' => Unit::active()->orderBy('city')->orderBy('name')->get(['id', 'name'])];
     }
 }

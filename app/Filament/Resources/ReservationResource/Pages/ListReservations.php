@@ -27,14 +27,14 @@ class ListReservations extends ListRecords
         return [
             'all' => Tab::make('Todas'),
             'today' => Tab::make('Hoje')->icon('heroicon-m-sun')
-                ->modifyQueryUsing(fn (Builder $q) => $q->whereDate('starts_at', today()))
+                ->modifyQueryUsing(fn (Builder $query) => $query->whereDate('starts_at', today()))
                 ->badge(fn () => $base()->whereDate('starts_at', today())->count()),
             'pending' => Tab::make('Aguardando pagamento')->icon('heroicon-m-clock')
-                ->modifyQueryUsing(fn (Builder $q) => $q->where('status', ReservationStatus::Pending))
+                ->modifyQueryUsing(fn (Builder $query) => $query->where('status', ReservationStatus::Pending))
                 ->badge(fn () => $base()->where('status', ReservationStatus::Pending)->count())->badgeColor('warning'),
-            'room' => Tab::make('Hospedagem')->modifyQueryUsing(fn (Builder $q) => $q->where('reservable_type', 'room')),
-            'professional' => Tab::make('Spa')->modifyQueryUsing(fn (Builder $q) => $q->where('reservable_type', 'professional')),
-            'space' => Tab::make('Salas')->modifyQueryUsing(fn (Builder $q) => $q->where('reservable_type', 'space')),
+            'hour' => Tab::make('Por hora')->icon('heroicon-m-clock')->modifyQueryUsing(fn (Builder $query) => $query->billedBy('hour')),
+            'day' => Tab::make('Por dia')->icon('heroicon-m-sun')->modifyQueryUsing(fn (Builder $query) => $query->billedBy('day')),
+            'month' => Tab::make('Mensais')->icon('heroicon-m-calendar')->modifyQueryUsing(fn (Builder $query) => $query->billedBy('month')),
         ];
     }
 }

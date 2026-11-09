@@ -31,7 +31,7 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
-            ->brandName('Aurora Hotel & Spa')
+            ->brandName(config('aurora.name'))
             ->brandLogo(fn () => view('filament.brand'))
             ->brandLogoHeight('2.6rem')
             ->favicon("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='19' fill='%230F1E33'/%3E%3Cpath d='M8 25 Q20 6 32 25' fill='none' stroke='%23C8A15A' stroke-width='3'/%3E%3Ccircle cx='20' cy='18' r='3.5' fill='%23C8A15A'/%3E%3C/svg%3E")
@@ -49,9 +49,7 @@ class AdminPanelProvider extends PanelProvider
             ->viteTheme('resources/css/filament/admin/theme.css')
             ->navigationGroups([
                 NavigationGroup::make('Operação'),
-                NavigationGroup::make('Hospedagem'),
-                NavigationGroup::make('Spa & Bem-estar'),
-                NavigationGroup::make('Salas & Eventos'),
+                NavigationGroup::make('Cadastros'),
                 NavigationGroup::make('Administração')->collapsed(),
             ])
             ->userMenuItems([

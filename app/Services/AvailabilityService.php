@@ -2,11 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\Professional;
+use App\Enums\BillingUnit;
 use App\Models\Reservation;
-use App\Models\Room;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -14,131 +11,124 @@ use Illuminate\Support\Collection;
 
 /**
  * Consulta de disponibilidade. Toda verificação usa a MESMA regra de sobreposição
- * (Reservation::scopeOverlapping), seja para quartos, salas ou profissionais.
+ * (Reservation::scopeOverlapping), seja a reserva por hora, por dia ou por mês.
  */
 class AvailabilityService
 {
-    /** Converte datas de check-in/out na janela real ocupada (14h → 12h). */
-    public function stayWindow(CarbonInterface $checkIn, CarbonInterface $checkOut): array
+    /**
+     * Converte "início + quantidade" na janela real ocupada, conforme a cobrança da categoria:
+     *  - hora: [início, início + N horas)
+     *  - dia:  do 1º dia na abertura até o último dia no fechamento
+     *  - mês:  do 1º dia na abertura até a véspera do mesmo dia N meses depois, no fechamento
+     *
+     * @return array{0: CarbonImmutable, 1: CarbonImmutable}
+     */
+    public function window(Space $space, CarbonInterface $start, int $quantity): array
     {
-        return [
-            CarbonImmutable::parse($checkIn)->setTime((int) config('hotel.check_in_hour'), 0),
-            CarbonImmutable::parse($checkOut)->setTime((int) config('hotel.check_out_hour'), 0),
-        ];
-    }
+        $start = CarbonImmutable::parse($start);
+        $unit = $space->unit;
 
-    /** Tipos de quarto que comportam os hóspedes, com a contagem de unidades livres no período. */
-    public function roomTypesFor(CarbonInterface $checkIn, CarbonInterface $checkOut, int $guests = 1): Collection
-    {
-        [$start, $end] = $this->stayWindow($checkIn, $checkOut);
-
-        return RoomType::query()
-            ->where('capacity', '>=', $guests)
-            ->withCount([
-                'rooms as available_rooms_count' => fn ($q) => $q->operational()->freeBetween($start, $end),
-            ])
-            ->orderBy('base_price')
-            ->get();
-    }
-
-    public function freeRoomsCount(RoomType $type, CarbonInterface $checkIn, CarbonInterface $checkOut): int
-    {
-        [$start, $end] = $this->stayWindow($checkIn, $checkOut);
-
-        return $type->rooms()->operational()->freeBetween($start, $end)->count();
-    }
-
-    public function findFreeRoom(RoomType $type, CarbonInterface $start, CarbonInterface $end): ?Room
-    {
-        return $type->rooms()->operational()->freeBetween($start, $end)->orderBy('number')->first();
+        return match ($space->billing_unit) {
+            BillingUnit::Hour => [$start, $start->addHours($quantity)],
+            BillingUnit::Day => [
+                $start->setTime($unit->opens_hour, 0),
+                $start->addDays($quantity - 1)->setTime($unit->closes_hour, 0),
+            ],
+            BillingUnit::Month => [
+                $start->setTime($unit->opens_hour, 0),
+                $start->addMonthsNoOverflow($quantity)->subDay()->setTime($unit->closes_hour, 0),
+            ],
+        };
     }
 
     /**
-     * Grade de horários de uma sala em um dia (blocos de 1h).
+     * Grade de horários de um espaço cobrado por hora em um dia (blocos de 1h).
      *
-     * @return array<int, array{time:string, start:string, available:bool, reason:?string}>
+     * @return array<int, array{time:string, end:string, start:string, available:bool, reason:?string, left:int}>
      */
-    public function spaceSlots(Space $space, CarbonInterface $date): array
+    public function hourSlots(Space $space, CarbonInterface $date): array
     {
         $day = CarbonImmutable::parse($date)->startOfDay();
-        $busy = $this->busyIntervals($space, $day);
+        $busy = $this->busyIntervals($space, $day, $day->endOfDay());
         $slots = [];
 
-        for ($h = $space->opens_hour; $h < $space->closes_hour; $h++) {
+        for ($h = $space->unit->opens_hour; $h < $space->unit->closes_hour; $h++) {
             $start = $day->setTime($h, 0);
-            $slots[] = $this->slot($start, $start->addHour(), $busy);
+            $end = $start->addHour();
+
+            $left = $this->left($space, $busy, $start, $end);
+            $reason = match (true) {
+                $start->lessThan(now()) => 'past',
+                $left === 0 => 'busy',
+                default => null,
+            };
+
+            $slots[] = [
+                'time' => $start->format('H:i'),
+                'end' => $end->format('H:i'),
+                'start' => $start->toIso8601String(),
+                'available' => $reason === null,
+                'reason' => $reason,
+                'left' => $left,
+            ];
         }
 
         return $slots;
     }
 
     /**
-     * Horários livres de um profissional para um serviço: cruza expediente,
-     * duração do serviço e reservas existentes.
+     * Situação de cada dia a partir de hoje, para espaços cobrados por dia ou por mês.
+     * Um dia está "ocupado" se uma reserva ativa toca o expediente dele (ou, se compartilhado, se lotou).
      *
-     * @return array<int, array{time:string, start:string, available:bool, reason:?string}>
+     * @return array<int, array{date:string, available:bool, reason:?string, left:int}>
      */
-    public function professionalSlots(Professional $professional, Service $service, CarbonInterface $date): array
+    public function dayCalendar(Space $space, int $days): array
     {
-        $day = CarbonImmutable::parse($date)->startOfDay();
-        $busy = $this->busyIntervals($professional, $day);
-        $step = (int) config('hotel.slot_step_minutes');
-        $slots = [];
+        $first = CarbonImmutable::today();
+        $last = $first->addDays($days - 1);
+        [$opens, $closes] = [$space->unit->opens_hour, $space->unit->closes_hour];
 
-        $shifts = $professional->workingHours()->where('weekday', $day->dayOfWeek)->get();
+        $busy = $this->busyIntervals($space, $first->setTime($opens, 0), $last->setTime($closes, 0));
+        $calendar = [];
 
-        foreach ($shifts as $shift) {
-            $cursor = $day->setTimeFromTimeString($shift->start_time);
-            $shiftEnd = $day->setTimeFromTimeString($shift->end_time);
+        for ($day = $first; $day <= $last; $day = $day->addDay()) {
+            $start = $day->setTime($opens, 0);
+            $end = $day->setTime($closes, 0);
 
-            while ($cursor->addMinutes($service->duration_min) <= $shiftEnd) {
-                $slots[] = $this->slot($cursor, $cursor->addMinutes($service->duration_min), $busy);
-                $cursor = $cursor->addMinutes($step);
-            }
+            $left = $this->left($space, $busy, $start, $end);
+            $reason = match (true) {
+                $end->lessThanOrEqualTo(now()) => 'past',
+                $left === 0 => 'busy',
+                default => null,
+            };
+
+            $calendar[] = ['date' => $day->toDateString(), 'available' => $reason === null, 'reason' => $reason, 'left' => $left];
         }
 
-        return $slots;
+        return $calendar;
     }
 
-    /** Verifica se o intervalo cabe inteiro dentro de algum turno do profissional. */
-    public function withinWorkingHours(Professional $professional, CarbonInterface $start, CarbonInterface $end): bool
+    /** Intervalos ocupados de um espaço em uma janela (uma única consulta). */
+    private function busyIntervals(Space $space, CarbonInterface $from, CarbonInterface $to): Collection
     {
-        if (! $start->isSameDay($end)) {
-            return false;
-        }
-
-        return $professional->workingHours()
-            ->where('weekday', $start->dayOfWeek)
-            ->where('start_time', '<=', $start->format('H:i:s'))
-            ->where('end_time', '>=', $end->format('H:i:s'))
-            ->exists();
-    }
-
-    /** Intervalos ocupados de um recurso em um dia (uma única consulta). */
-    private function busyIntervals($reservable, CarbonImmutable $day): Collection
-    {
-        return $reservable->reservations()
+        return $space->reservations()
             ->blocking()
-            ->overlapping($day, $day->endOfDay())
-            ->get(['starts_at', 'ends_at']);
+            ->overlapping($from, $to)
+            ->get(['starts_at', 'ends_at', 'guests']);
     }
 
-    private function slot(CarbonImmutable $start, CarbonImmutable $end, Collection $busy): array
+    /**
+     * Quanto ainda cabe no intervalo: espaço exclusivo → 1 (livre) ou 0 (ocupado);
+     * compartilhado → vagas restantes (capacidade − pessoas já reservadas).
+     */
+    private function left(Space $space, Collection $busy, CarbonInterface $start, CarbonInterface $end): int
     {
-        $reason = null;
+        $overlapping = $busy->filter(fn (Reservation $r) => $r->starts_at < $end && $r->ends_at > $start);
 
-        if ($start->lessThan(now())) {
-            $reason = 'past';
-        } elseif ($busy->contains(fn (Reservation $r) => $r->starts_at < $end && $r->ends_at > $start)) {
-            $reason = 'busy';
+        if (! $space->is_shared) {
+            return $overlapping->isEmpty() ? 1 : 0;
         }
 
-        return [
-            'time' => $start->format('H:i'),
-            'end' => $end->format('H:i'),
-            'start' => $start->toIso8601String(),
-            'available' => $reason === null,
-            'reason' => $reason,
-        ];
+        return max(0, $space->capacity - (int) $overlapping->sum('guests'));
     }
 }

@@ -20,9 +20,8 @@ class Dashboard extends BaseDashboard
     {
         return [
             Widgets\StatsOverview::class,
-            Widgets\ProfessionalStats::class,
             Widgets\ReservationsChart::class,
-            Widgets\RevenueByKindChart::class,
+            Widgets\RevenueByUnitChart::class,
             Widgets\TodayAgenda::class,
         ];
     }

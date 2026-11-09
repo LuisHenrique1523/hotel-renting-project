@@ -6,7 +6,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $title ? $title.' · ' : '' }}{{ config('hotel.name') }}</title>
+    <title>{{ $title ? $title.' · ' : '' }}{{ config('aurora.name') }}</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='19' fill='%230F1E33'/%3E%3Cpath d='M8 25 Q20 6 32 25' fill='none' stroke='%23C8A15A' stroke-width='3'/%3E%3Ccircle cx='20' cy='18' r='3.5' fill='%23C8A15A'/%3E%3C/svg%3E">
 
 
@@ -30,9 +30,8 @@
 
             @php
                 $links = [
-                    ['rooms.*', 'rooms.index', 'Hospedagem'],
-                    ['spa.*', 'spa.index', 'Spa & Bem-estar'],
-                    ['spaces.*', 'spaces.index', 'Salas & Eventos'],
+                    ['units.*', 'units.index', 'Unidades'],
+                    ['spaces.*', 'spaces.index', 'Espaços'],
                 ];
             @endphp
 
@@ -84,7 +83,7 @@
                     <a href="{{ route('login') }}"
                        :class="scrolled ? 'text-night-700 hover:text-night-900' : 'text-white/90 hover:text-white'"
                        class="text-sm font-medium transition">Entrar</a>
-                    <a href="{{ route('rooms.index') }}" class="btn-gold !px-5 !py-2.5">Reservar agora</a>
+                    <a href="{{ route('spaces.index') }}" class="btn-gold !px-5 !py-2.5">Reservar agora</a>
                 @endauth
             </div>
 
@@ -123,30 +122,29 @@
             <div class="md:col-span-2">
                 <x-logo light />
                 <p class="mt-5 max-w-sm text-sm leading-relaxed text-night-300">
-                    Hospedagem, bem-estar e eventos em um só lugar. Reserve quartos, agende terapias
-                    e alugue salas com confirmação instantânea.
+                    Rede de espaços de trabalho flexíveis. Reserve salas de reunião por hora,
+                    coworking por dia e escritórios privativos por mês, com confirmação instantânea.
                 </p>
             </div>
             <div>
                 <p class="eyebrow !text-gold-400">Reservas</p>
                 <ul class="mt-4 space-y-2.5 text-sm">
-                    <li><a class="hover:text-white" href="{{ route('rooms.index') }}">Quartos e suítes</a></li>
-                    <li><a class="hover:text-white" href="{{ route('spa.index') }}">Spa &amp; bem-estar</a></li>
-                    <li><a class="hover:text-white" href="{{ route('spaces.index') }}">Salas &amp; eventos</a></li>
+                    <li><a class="hover:text-white" href="{{ route('units.index') }}">Nossas unidades</a></li>
+                    <li><a class="hover:text-white" href="{{ route('spaces.index') }}">Todos os espaços</a></li>
+                    <li><a class="hover:text-white" href="{{ route('reservations.index') }}">Minhas reservas</a></li>
                 </ul>
             </div>
             <div>
                 <p class="eyebrow !text-gold-400">Contato</p>
                 <ul class="mt-4 space-y-2.5 text-sm text-night-300">
-                    <li>{{ config('hotel.address') }}</li>
-                    <li>{{ config('hotel.phone') }}</li>
-                    <li>{{ config('hotel.email') }}</li>
+                    <li>{{ config('aurora.phone') }}</li>
+                    <li>{{ config('aurora.email') }}</li>
                 </ul>
             </div>
         </div>
         <div class="border-t border-white/5">
             <div class="container-site flex flex-col justify-between gap-2 py-6 text-xs text-night-400 sm:flex-row">
-                <p>© {{ now()->year }} Aurora Hotel &amp; Spa · Projeto acadêmico, Equipe 5, Programação de Sistemas Web (Afya)</p>
+                <p>© {{ now()->year }} {{ config('aurora.name') }} · Projeto acadêmico, Equipe 5, Programação de Sistemas Web (Afya)</p>
                 <p>Laravel {{ app()->version() }} · MySQL · Filament</p>
             </div>
         </div>

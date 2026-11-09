@@ -24,7 +24,7 @@
                         ⏳ Horário reservado por <span class="font-mono" x-text="clock"></span>
                     </span>
                 </div>
-                <p class="mt-2 text-sm text-night-500">Seguramos este horário para você. Após o prazo, ele volta a ficar disponível para outros hóspedes.</p>
+                <p class="mt-2 text-sm text-night-500">Seguramos este horário para você. Após o prazo, ele volta a ficar disponível para outros clientes.</p>
 
                 <div class="mt-8 grid grid-cols-2 gap-3">
                     <button type="button" @click="method = 'pix'"
@@ -89,9 +89,8 @@
                     <p class="text-xs font-semibold uppercase tracking-wider text-night-400">Resumo · {{ $reservation->code }}</p>
                     <div class="mt-4"><x-reservation-summary :reservation="$reservation" /></div>
                     <dl class="mt-6 space-y-2 border-t border-night-50 pt-4 text-sm">
-                        @if ($reservation->kind !== 'professional')
-                            <div class="flex justify-between"><dt class="text-night-500">{{ $reservation->kind === 'room' ? 'Hóspedes' : 'Participantes' }}</dt><dd>{{ $reservation->guests }}</dd></div>
-                        @endif
+                        <div class="flex justify-between"><dt class="text-night-500">Pessoas</dt><dd>{{ $reservation->guests }}</dd></div>
+                        <div class="flex justify-between"><dt class="text-night-500">{{ $reservation->quantity_label }} × @money($reservation->unit_price){{ $reservation->space?->is_shared && $reservation->guests > 1 ? ' × '.$reservation->guests.' pessoas' : '' }}</dt><dd>@money($reservation->total)</dd></div>
                         @if ($reservation->notes)
                             <div><dt class="text-night-500">Observações</dt><dd class="mt-1 italic">“{{ $reservation->notes }}”</dd></div>
                         @endif

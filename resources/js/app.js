@@ -12,12 +12,11 @@ import '@fontsource/playfair-display/500-italic.css';
 
 import Alpine from 'alpinejs';
 import confetti from 'canvas-confetti';
-import { serviceBooking, spaceBooking } from './booking';
+import { spaceBooking } from './booking';
 
 window.Alpine = Alpine;
 window.confetti = confetti;
 
-Alpine.data('serviceBooking', serviceBooking);
 Alpine.data('spaceBooking', spaceBooking);
 
 Alpine.start();

@@ -12,10 +12,12 @@ return new class extends Migration
             $table->id();
             $table->string('code', 12)->unique();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            // Motor de reservas único: aponta para Room, Space ou Professional
-            $table->string('reservable_type', 30);
-            $table->unsignedBigInteger('reservable_id');
-            $table->foreignId('service_id')->nullable()->constrained()->nullOnDelete();
+            // Espaço com histórico de reservas não pode ser apagado (desative-o no painel)
+            $table->foreignId('space_id')->constrained()->restrictOnDelete();
+            // Retrato da cobrança no momento da reserva: se a categoria mudar depois, o histórico não muda
+            $table->string('billing_unit', 10);
+            $table->unsignedSmallInteger('quantity');
+            $table->decimal('unit_price', 10, 2);
             $table->dateTime('starts_at');
             $table->dateTime('ends_at');
             $table->unsignedSmallInteger('guests')->default(1);
@@ -28,7 +30,7 @@ return new class extends Migration
             $table->timestamp('cancelled_at')->nullable();
             $table->timestamps();
 
-            $table->index(['reservable_type', 'reservable_id', 'starts_at', 'ends_at'], 'reservations_agenda_index');
+            $table->index(['space_id', 'starts_at', 'ends_at'], 'reservations_agenda_index');
         });
 
         Schema::create('payments', function (Blueprint $table) {

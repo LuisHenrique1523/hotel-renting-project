@@ -2,22 +2,18 @@
 
 namespace App\Services;
 
+use App\Enums\BillingUnit;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
 use App\Events\ReservationCancelled;
 use App\Events\ReservationConfirmed;
 use App\Exceptions\ReservationException;
-use App\Models\Professional;
 use App\Models\Reservation;
-use App\Models\Room;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -35,77 +31,67 @@ class ReservationService
 
     // ── Criação ─────────────────────────────────────────────────
 
-    public function bookRoom(User $user, RoomType $type, CarbonInterface $checkIn, CarbonInterface $checkOut, int $guests, ?string $notes = null): Reservation
+    /**
+     * Reserva um espaço a partir de "início + quantidade" na unidade de cobrança da categoria.
+     * Hora: $start traz data e hora cheia. Dia e mês: só a data de início importa.
+     */
+    public function book(User $user, Space $space, CarbonInterface $start, int $quantity, int $guests = 1, ?string $notes = null): Reservation
     {
-        $checkIn = CarbonImmutable::parse($checkIn)->startOfDay();
-        $checkOut = CarbonImmutable::parse($checkOut)->startOfDay();
-
-        $this->ensure($checkIn->gte(today()), 'A data de check-in não pode estar no passado.');
-        $this->ensure($checkOut->gt($checkIn), 'O check-out deve ser depois do check-in.');
-        $this->ensure($checkIn->diffInDays($checkOut) <= config('hotel.max_nights'), 'O limite é de '.config('hotel.max_nights').' diárias por reserva.');
-        $this->ensure($guests >= 1 && $guests <= $type->capacity, "O {$type->name} acomoda até {$type->capacity} hóspedes.");
-
-        [$start, $end] = $this->availability->stayWindow($checkIn, $checkOut);
-        $total = $this->pricing->quoteRoom($type, $checkIn, $checkOut)['total'];
-
-        return DB::transaction(function () use ($user, $type, $start, $end, $total, $guests, $notes) {
-            // Trava os quartos do tipo: reservas concorrentes do mesmo tipo esperam aqui
-            $room = $type->rooms()->operational()->orderBy('number')->lockForUpdate()->get()
-                ->first(fn (Room $room) => $room->isFreeBetween($start, $end));
-
-            if (! $room) {
-                throw ReservationException::invalid("Não há mais {$type->name} disponível nessas datas. Tente outras datas ou outra categoria.");
-            }
-
-            return $this->create($user, $room, $start, $end, $total, $guests, $notes);
-        });
-    }
-
-    public function bookSpace(User $user, Space $space, CarbonInterface $start, CarbonInterface $end, int $guests = 1, ?string $notes = null): Reservation
-    {
+        $space->loadMissing('unit', 'category');
+        $category = $space->category;
+        $billing = $category->billing_unit;
         $start = CarbonImmutable::parse($start);
-        $end = CarbonImmutable::parse($end);
 
-        $this->ensure($space->is_active, 'Este espaço não está disponível para reservas.');
-        $this->ensure($start->isFuture(), 'Escolha um horário futuro.');
-        $this->ensure($end->gt($start) && $start->isSameDay($end), 'Intervalo de horário inválido.');
-        $this->ensure($start->minute === 0 && $end->minute === 0, 'Salas são reservadas em blocos de hora cheia.');
-        $this->ensure($start->hour >= $space->opens_hour && ($end->hour <= $space->closes_hour), "Funcionamento: {$space->opens_hour}h às {$space->closes_hour}h.");
-        $this->ensure($guests <= $space->capacity, "Capacidade máxima: {$space->capacity} pessoas.");
+        $this->ensure($space->isBookable(), 'Este espaço não está disponível para reservas.');
+        $this->ensure($quantity >= $category->min_quantity && $quantity <= $category->max_quantity,
+            "{$category->name}: reserve de {$billing->quantityLabel($category->min_quantity)} a {$billing->quantityLabel($category->max_quantity)}.");
+        $this->ensure($guests >= 1 && $guests <= $space->capacity, "Capacidade máxima: {$space->capacity} ".($space->capacity === 1 ? 'pessoa' : 'pessoas').'.');
+        $this->ensure($start->startOfDay()->lte(today()->addDays((int) config('aurora.booking_horizon_days'))),
+            'Reservas podem começar em até '.config('aurora.booking_horizon_days').' dias.');
 
-        $total = $this->pricing->quoteSpace($space, $start, $end)['total'];
+        [$from, $to] = $this->availability->window($space, $start, $quantity);
+        $unit = $space->unit;
 
-        return DB::transaction(function () use ($user, $space, $start, $end, $total, $guests, $notes) {
-            $locked = Space::whereKey($space->id)->lockForUpdate()->firstOrFail();
+        if ($billing === BillingUnit::Hour) {
+            $this->ensure($start->minute === 0 && $start->second === 0, 'Espaços por hora são reservados em blocos de hora cheia.');
+            $this->ensure($start->isFuture(), 'Escolha um horário futuro.');
+            $this->ensure($start->hour >= $unit->opens_hour && $to->lte($start->startOfDay()->setTime($unit->closes_hour, 0)),
+                "Funcionamento da unidade: {$unit->hours_label}.");
+        } else {
+            $this->ensure($start->startOfDay()->gte(today()), 'A data de início não pode estar no passado.');
+            $this->ensure($start->startOfDay()->setTime($unit->closes_hour, 0)->isFuture(), 'A unidade já encerrou o expediente nesta data. Escolha a partir de amanhã.');
+        }
 
-            if (! $locked->isFreeBetween($start, $end)) {
-                throw ReservationException::unavailable('Esse horário da sala');
+        $quote = $this->pricing->quote($space, $quantity, $guests);
+
+        return DB::transaction(function () use ($user, $space, $from, $to, $quote, $guests, $notes, $billing) {
+            // Trava a linha do espaço: reservas concorrentes do mesmo espaço esperam aqui
+            $locked = Space::whereKey($space->id)->lockForUpdate()->firstOrFail()
+                ->setRelation('category', $space->category);
+
+            if (! $locked->isFreeBetween($from, $to, $guests)) {
+                throw $locked->is_shared
+                    ? ReservationException::invalid('Não há '.($guests === 1 ? 'vaga' : "{$guests} vagas").' nesse período (restam '.$locked->seatsLeftBetween($from, $to).'). Escolha outra data.')
+                    : ReservationException::unavailable($billing === BillingUnit::Hour ? 'Esse horário' : 'Esse período');
             }
 
-            return $this->create($user, $locked, $start, $end, $total, $guests, $notes);
-        });
-    }
+            $reservation = Reservation::create([
+                'user_id' => $user->id,
+                'space_id' => $locked->id,
+                'billing_unit' => $billing,
+                'quantity' => $quote['quantity'],
+                'unit_price' => $quote['unit_price'],
+                'starts_at' => $from,
+                'ends_at' => $to,
+                'guests' => $guests,
+                'status' => ReservationStatus::Pending,
+                'total' => $quote['total'],
+                'notes' => $notes,
+            ]);
 
-    public function bookService(User $user, Professional $professional, Service $service, CarbonInterface $start, ?string $notes = null): Reservation
-    {
-        $start = CarbonImmutable::parse($start);
-        $end = $start->addMinutes($service->duration_min);
+            $reservation->payment()->create(['amount' => $quote['total'], 'status' => PaymentStatus::Pending]);
 
-        $this->ensure($professional->is_active && $service->is_active, 'Serviço indisponível no momento.');
-        $this->ensure($professional->services()->whereKey($service->id)->exists(), "{$professional->name} não realiza {$service->name}.");
-        $this->ensure($start->isFuture(), 'Escolha um horário futuro.');
-        $this->ensure($this->availability->withinWorkingHours($professional, $start, $end), 'Fora do horário de atendimento do profissional.');
-
-        $total = $this->pricing->quoteService($service);
-
-        return DB::transaction(function () use ($user, $professional, $service, $start, $end, $total, $notes) {
-            $locked = Professional::whereKey($professional->id)->lockForUpdate()->firstOrFail();
-
-            if (! $locked->isFreeBetween($start, $end)) {
-                throw ReservationException::unavailable('Esse horário com '.$professional->name);
-            }
-
-            return $this->create($user, $locked, $start, $end, $total, 1, $notes, $service);
+            return $reservation;
         });
     }
 
@@ -147,7 +133,7 @@ class ReservationService
     public function cancel(Reservation $reservation, ?User $by = null): Reservation
     {
         if ($by && ! $by->isStaff()) {
-            $this->ensure($reservation->canBeCancelledByGuest(), 'Cancelamentos online são permitidos até '.config('hotel.guest_cancellation_hours').'h antes. Fale com a recepção.');
+            $this->ensure($reservation->canBeCancelledByGuest(), 'Cancelamentos online são permitidos até '.config('aurora.guest_cancellation_hours').'h antes. Fale com a recepção da unidade.');
         }
 
         return DB::transaction(function () use ($reservation) {
@@ -206,26 +192,6 @@ class ReservationService
     }
 
     // ── Internos ────────────────────────────────────────────────
-
-    private function create(User $user, Model $reservable, CarbonInterface $start, CarbonInterface $end, float $total, int $guests, ?string $notes, ?Service $service = null): Reservation
-    {
-        $reservation = new Reservation([
-            'user_id' => $user->id,
-            'service_id' => $service?->id,
-            'starts_at' => $start,
-            'ends_at' => $end,
-            'guests' => $guests,
-            'status' => ReservationStatus::Pending,
-            'total' => $total,
-            'notes' => $notes,
-        ]);
-        $reservation->reservable()->associate($reservable);
-        $reservation->save();
-
-        $reservation->payment()->create(['amount' => $total, 'status' => PaymentStatus::Pending]);
-
-        return $reservation;
-    }
 
     private function ensure(bool $condition, string $message): void
     {

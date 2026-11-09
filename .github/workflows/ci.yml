@@ -47,14 +47,14 @@ jobs:
         run: docker build -t aurora-hotel-spa .
       - name: Sobe o contêiner e testa a home
         run: |
-          docker run -d --name aurora -p 8080:10000 -e APP_ENV=production -e DB_CONNECTION=sqlite -e HOTEL_DEMO=true -e LOG_CHANNEL=stderr -e SESSION_DRIVER=database -e CACHE_STORE=database aurora-hotel-spa
+          docker run -d --name aurora -p 8080:10000 -e APP_ENV=production -e DB_CONNECTION=sqlite -e AURORA_DEMO=true -e LOG_CHANNEL=stderr -e SESSION_DRIVER=database -e CACHE_STORE=database aurora-hotel-spa
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:8080/up > /dev/null; then break; fi
             sleep 2
           done
           docker logs aurora | tail -20
           curl -fsS -o /dev/null -w "home: %{http_code}\n" http://localhost:8080/
-          curl -fsS -o /dev/null -w "quartos: %{http_code}\n" http://localhost:8080/quartos
-          curl -fsS -o /dev/null -w "spa: %{http_code}\n" http://localhost:8080/spa/massagem-relaxante
+          curl -fsS -o /dev/null -w "unidades: %{http_code}\n" http://localhost:8080/unidades
+          curl -fsS -o /dev/null -w "espaço: %{http_code}\n" http://localhost:8080/espacos/sala-trianon
           curl -fsS -o /dev/null -w "login: %{http_code}\n" http://localhost:8080/login
           curl -fsS -o /dev/null -w "admin login: %{http_code}\n" http://localhost:8080/admin/login

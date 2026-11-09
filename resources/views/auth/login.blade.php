@@ -35,12 +35,12 @@
         Ainda não tem conta? <a href="{{ route('register') }}" class="font-semibold text-gold-700 hover:underline">Cadastre-se grátis</a>
     </p>
 
-    {{-- Atalhos de demonstração (ativados por HOTEL_DEMO) --}}
-    @if (config('hotel.demo_mode'))
+    {{-- Atalhos de demonstração (ativados por AURORA_DEMO) --}}
+    @if (config('aurora.demo_mode'))
         <div class="mt-10 rounded-2xl border border-dashed border-night-200 p-4" x-data>
             <p class="text-xs font-semibold uppercase tracking-wider text-night-400">Contas de demonstração · senha aurora123</p>
             <div class="mt-3 flex flex-wrap gap-2">
-                @foreach (['cliente@aurora.test' => 'Hóspede', 'recepcao@aurora.test' => 'Recepção', 'spa@aurora.test' => 'Profissional', 'admin@aurora.test' => 'Admin'] as $email => $label)
+                @foreach (['cliente@aurora.test' => 'Cliente', 'recepcao@aurora.test' => 'Recepção', 'admin@aurora.test' => 'Admin'] as $email => $label)
                     <button type="button" class="chip hover:bg-gold-100"
                             @click="document.getElementById('email').value='{{ $email }}'; document.getElementById('password').value='aurora123'">{{ $label }}</button>
                 @endforeach

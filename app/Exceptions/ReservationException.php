@@ -13,7 +13,7 @@ class ReservationException extends RuntimeException
 {
     public static function unavailable(string $what = 'Este horário'): self
     {
-        return new self("{$what} acabou de ser reservado por outra pessoa. Escolha outra opção.");
+        return new self("{$what} não está mais disponível para este espaço. Escolha outra data ou outro espaço.");
     }
 
     public static function invalid(string $message): self

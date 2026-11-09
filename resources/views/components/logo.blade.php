@@ -9,6 +9,6 @@
     </svg>
     <span class="leading-none">
         <span @class(['block font-display text-xl font-semibold tracking-[0.18em]', 'text-white' => $light, 'text-night-900' => ! $light])>AURORA</span>
-        <span @class(['block text-[0.58rem] font-medium uppercase tracking-[0.42em]', 'text-sand-200' => $light, 'text-gold-600' => ! $light])>Hotel &amp; Spa</span>
+        <span @class(['block text-[0.58rem] font-medium uppercase tracking-[0.42em]', 'text-sand-200' => $light, 'text-gold-600' => ! $light])>Workspaces</span>
     </span>
 </span>

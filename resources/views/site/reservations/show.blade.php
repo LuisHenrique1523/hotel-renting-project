@@ -45,17 +45,16 @@
 
             <div class="grid gap-8 p-6 sm:grid-cols-[1fr_auto] sm:p-8">
                 <dl class="grid grid-cols-2 gap-x-6 gap-y-5 text-sm">
-                    @if ($reservation->kind === 'room')
-                        <div><dt class="field-label">Check-in</dt><dd class="font-display text-xl capitalize">{{ $reservation->starts_at->translatedFormat('D, d M') }}</dd><dd class="text-night-500">a partir das {{ $reservation->starts_at->format('H\hi') }}</dd></div>
-                        <div><dt class="field-label">Check-out</dt><dd class="font-display text-xl capitalize">{{ $reservation->ends_at->translatedFormat('D, d M') }}</dd><dd class="text-night-500">até {{ $reservation->ends_at->format('H\hi') }}</dd></div>
-                    @else
+                    @if ($reservation->billing_unit === \App\Enums\BillingUnit::Hour)
                         <div><dt class="field-label">Data</dt><dd class="font-display text-xl capitalize">{{ $reservation->starts_at->translatedFormat('D, d M Y') }}</dd></div>
                         <div><dt class="field-label">Horário</dt><dd class="font-display text-xl">{{ $reservation->starts_at->format('H:i') }} – {{ $reservation->ends_at->format('H:i') }}</dd></div>
+                    @else
+                        <div><dt class="field-label">Início</dt><dd class="font-display text-xl capitalize">{{ $reservation->starts_at->translatedFormat('D, d M Y') }}</dd><dd class="text-night-500">a partir das {{ $reservation->starts_at->format('H\hi') }}</dd></div>
+                        <div><dt class="field-label">Fim</dt><dd class="font-display text-xl capitalize">{{ $reservation->ends_at->translatedFormat('D, d M Y') }}</dd><dd class="text-night-500">até {{ $reservation->ends_at->format('H\hi') }} · {{ $reservation->quantity_label }}</dd></div>
                     @endif
+                    <div class="col-span-2"><dt class="field-label">Endereço</dt><dd class="font-medium">{{ $reservation->space?->unit?->full_address }}</dd></div>
                     <div><dt class="field-label">Titular</dt><dd class="font-medium">{{ $reservation->user->name }}</dd></div>
-                    @if ($reservation->kind !== 'professional')
-                        <div><dt class="field-label">{{ $reservation->kind === 'room' ? 'Hóspedes' : 'Participantes' }}</dt><dd class="font-medium">{{ $reservation->guests }}</dd></div>
-                    @endif
+                    <div><dt class="field-label">Pessoas</dt><dd class="font-medium">{{ $reservation->guests }}</dd></div>
                     <div><dt class="field-label">Pagamento</dt>
                         <dd class="font-medium">{{ $reservation->payment?->method?->getLabel() ?? '—' }}
                             @if ($reservation->payment)<span class="text-night-400">· {{ $reservation->payment->status->getLabel() }}</span>@endif
@@ -96,12 +95,12 @@
                 <div class="ml-auto">
                     @if ($reservation->canBeCancelledByGuest())
                         <form method="POST" action="{{ route('reservations.cancel', $reservation) }}"
-                              onsubmit="return confirm('Tem certeza que deseja cancelar esta reserva? O horário será liberado.')">
+                              onsubmit="return confirm('Tem certeza que deseja cancelar esta reserva? O período será liberado.')">
                             @csrf
                             <button class="btn !px-4 text-rose-600 hover:bg-rose-50">Cancelar reserva</button>
                         </form>
                     @else
-                        <p class="text-xs text-night-400">Cancelamento online indisponível (menos de {{ config('hotel.guest_cancellation_hours') }}h). Fale com a recepção.</p>
+                        <p class="text-xs text-night-400">Cancelamento online indisponível (menos de {{ config('aurora.guest_cancellation_hours') }}h). Fale com a recepção da unidade.</p>
                     @endif
                 </div>
             @endif

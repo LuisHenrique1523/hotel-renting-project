@@ -1,4 +1,4 @@
-# Imagem de produção do Aurora Hotel & Spa (usada pelo Render).
+# Imagem de produção do Aurora Workspaces (usada pelo Render).
 # Três estágios: dependências PHP → build do front-end → runtime Apache + PHP.
 
 # ── 1) Dependências PHP ─────────────────────────────────────────

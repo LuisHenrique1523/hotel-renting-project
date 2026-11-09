@@ -2,15 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\BillingUnit;
 use App\Enums\PaymentMethod;
 use App\Enums\ReservationStatus;
-use App\Http\Requests\StoreRoomReservationRequest;
-use App\Http\Requests\StoreServiceReservationRequest;
 use App\Http\Requests\StoreSpaceReservationRequest;
 use App\Mail\ReservationStatusMail;
 use App\Models\Reservation;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
 use App\Services\ReservationService;
 use Carbon\CarbonImmutable;
@@ -21,7 +18,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 /**
- * Fluxo do hóspede: reservar → pagar → acompanhar → cancelar.
+ * Fluxo do cliente: reservar → pagar → acompanhar → cancelar.
  * Toda regra de negócio está no ReservationService; aqui só orquestramos HTTP.
  */
 class ReservationController extends Controller
@@ -31,7 +28,7 @@ class ReservationController extends Controller
     public function index(Request $request): View
     {
         $all = $request->user()->reservations()
-            ->with(['reservable' => fn ($morph) => $morph->morphWith([\App\Models\Room::class => ['type'], \App\Models\Professional::class => ['user']]), 'service'])
+            ->with('space.unit', 'space.category')
             ->orderBy('starts_at')
             ->get();
 
@@ -42,41 +39,18 @@ class ReservationController extends Controller
         ]);
     }
 
-    public function storeRoom(StoreRoomReservationRequest $request, RoomType $roomType): RedirectResponse
+    public function store(StoreSpaceReservationRequest $request, Space $space): RedirectResponse
     {
-        $reservation = $this->engine->bookRoom(
-            $request->user(), $roomType,
-            CarbonImmutable::parse($request->validated('check_in')),
-            CarbonImmutable::parse($request->validated('check_out')),
+        $start = CarbonImmutable::parse($request->validated('date'))->startOfDay();
+
+        if ($space->billing_unit === BillingUnit::Hour) {
+            $start = $start->setTime((int) $request->validated('start_hour'), 0);
+        }
+
+        $reservation = $this->engine->book(
+            $request->user(), $space, $start,
+            (int) $request->validated('quantity'),
             (int) $request->validated('guests'),
-            $request->validated('notes'),
-        );
-
-        return to_route('reservations.checkout', $reservation);
-    }
-
-    public function storeSpace(StoreSpaceReservationRequest $request, Space $space): RedirectResponse
-    {
-        $day = CarbonImmutable::parse($request->validated('date'))->startOfDay();
-
-        $reservation = $this->engine->bookSpace(
-            $request->user(), $space,
-            $day->addHours((int) $request->validated('start_hour')),
-            $day->addHours((int) $request->validated('end_hour')),
-            (int) $request->validated('guests'),
-            $request->validated('notes'),
-        );
-
-        return to_route('reservations.checkout', $reservation);
-    }
-
-    public function storeService(StoreServiceReservationRequest $request, Service $service): RedirectResponse
-    {
-        $professional = $service->professionals()->findOrFail($request->validated('professional_id'));
-
-        $reservation = $this->engine->bookService(
-            $request->user(), $professional, $service,
-            CarbonImmutable::parse($request->validated('starts_at'))->setTimezone(config('app.timezone')),
             $request->validated('notes'),
         );
 
@@ -91,7 +65,8 @@ class ReservationController extends Controller
             return to_route('reservations.show', $reservation);
         }
 
-        $expiresAt = $reservation->created_at->addMinutes((int) config('hotel.pending_expiration_minutes'));
+        $reservation->load('space.unit', 'space.category');
+        $expiresAt = $reservation->created_at->addMinutes((int) config('aurora.pending_expiration_minutes'));
 
         return view('site.reservations.checkout', compact('reservation', 'expiresAt'));
     }
@@ -115,7 +90,7 @@ class ReservationController extends Controller
     {
         Gate::authorize('view', $reservation);
 
-        $reservation->load('reservable', 'service', 'payment', 'user');
+        $reservation->load('space.unit', 'space.category', 'payment', 'user');
 
         return view('site.reservations.show', compact('reservation'));
     }
@@ -126,15 +101,15 @@ class ReservationController extends Controller
 
         $this->engine->cancel($reservation, $request->user());
 
-        return to_route('reservations.show', $reservation)->with('success', 'Reserva cancelada. O horário foi liberado.');
+        return to_route('reservations.show', $reservation)->with('success', 'Reserva cancelada. O período foi liberado.');
     }
 
-    /** Pré-visualização do e-mail enviado ao hóspede (útil para a demonstração). */
+    /** Pré-visualização do e-mail enviado ao cliente (útil para a demonstração). */
     public function emailPreview(Reservation $reservation): ReservationStatusMail
     {
         Gate::authorize('view', $reservation);
 
-        return new ReservationStatusMail($reservation->load('user', 'reservable', 'service'),
+        return new ReservationStatusMail($reservation->load('user', 'space.unit', 'space.category'),
             $reservation->status === ReservationStatus::Cancelled ? 'cancelled' : 'confirmed');
     }
 }

@@ -29,7 +29,7 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        // Hóspedes fictícios para popular o histórico
+        // Clientes fictícios para popular o histórico
         User::factory(45)->create(['role' => UserRole::Guest]);
 
         $this->call([

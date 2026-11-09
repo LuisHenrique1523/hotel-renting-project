@@ -8,7 +8,6 @@ use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -44,28 +43,18 @@ class User extends Authenticatable implements FilamentUser
         return $this->hasMany(Reservation::class);
     }
 
-    public function professional(): HasOne
-    {
-        return $this->hasOne(Professional::class);
-    }
-
     public function isAdmin(): bool
     {
         return $this->role === UserRole::Admin;
     }
 
-    /** Admin e recepção operam o hotel inteiro. */
+    /** Admin e recepção operam a rede inteira. */
     public function isStaff(): bool
     {
         return in_array($this->role, [UserRole::Admin, UserRole::Staff], true);
     }
 
-    public function isProfessional(): bool
-    {
-        return $this->role === UserRole::Professional;
-    }
-
-    /** Hóspedes não acessam o painel administrativo. */
+    /** Clientes não acessam o painel administrativo. */
     public function canAccessPanel(Panel $panel): bool
     {
         return $this->role !== UserRole::Guest;

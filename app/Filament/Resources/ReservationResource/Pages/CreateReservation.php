@@ -2,11 +2,9 @@
 
 namespace App\Filament\Resources\ReservationResource\Pages;
 
+use App\Enums\BillingUnit;
 use App\Exceptions\ReservationException;
 use App\Filament\Resources\ReservationResource;
-use App\Models\Professional;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
 use App\Models\User;
 use App\Services\ReservationService;
@@ -29,20 +27,16 @@ class CreateReservation extends CreateRecord
     protected function handleRecordCreation(array $data): Model
     {
         $engine = app(ReservationService::class);
-        $guest = User::findOrFail($data['user_id']);
+        $client = User::findOrFail($data['user_id']);
+        $space = Space::with('unit', 'category')->findOrFail($data['space_id']);
+
+        $start = CarbonImmutable::parse($data['date'])->startOfDay();
+        if ($space->billing_unit === BillingUnit::Hour) {
+            $start = $start->setTime((int) $data['start_hour'], 0);
+        }
 
         try {
-            $reservation = match ($data['kind']) {
-                'room' => $engine->bookRoom($guest, RoomType::findOrFail($data['room_type_id']),
-                    CarbonImmutable::parse($data['check_in']), CarbonImmutable::parse($data['check_out']),
-                    (int) $data['guests'], $data['notes'] ?? null),
-                'space' => $engine->bookSpace($guest, Space::findOrFail($data['space_id']),
-                    CarbonImmutable::parse($data['space_start']), CarbonImmutable::parse($data['space_end']),
-                    (int) $data['guests'], $data['notes'] ?? null),
-                'professional' => $engine->bookService($guest, Professional::findOrFail($data['professional_id']),
-                    Service::findOrFail($data['service_id']), CarbonImmutable::parse($data['service_start']),
-                    $data['notes'] ?? null),
-            };
+            $reservation = $engine->book($client, $space, $start, (int) $data['quantity'], (int) $data['guests'], $data['notes'] ?? null);
 
             if ($data['confirm_now'] ?? false) {
                 $engine->confirm($reservation);

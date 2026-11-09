@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\BillingUnit;
 use App\Enums\ReservationStatus;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -9,26 +10,14 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Str;
 
 class Reservation extends Model
 {
     use HasFactory;
 
-    /** Tipos do morph map (ver AppServiceProvider). */
-    public const KIND_ROOM = 'room';
-    public const KIND_SPACE = 'space';
-    public const KIND_PROFESSIONAL = 'professional';
-
-    public const KINDS = [
-        self::KIND_ROOM => 'Hospedagem',
-        self::KIND_SPACE => 'Sala',
-        self::KIND_PROFESSIONAL => 'Spa & Serviços',
-    ];
-
     protected $fillable = [
-        'code', 'user_id', 'reservable_type', 'reservable_id', 'service_id',
+        'code', 'user_id', 'space_id', 'billing_unit', 'quantity', 'unit_price',
         'starts_at', 'ends_at', 'guests', 'status', 'total', 'notes',
         'confirmed_at', 'checked_in_at', 'checked_out_at', 'cancelled_at',
     ];
@@ -37,8 +26,11 @@ class Reservation extends Model
     {
         return [
             'status' => ReservationStatus::class,
+            'billing_unit' => BillingUnit::class,
             'user_id' => 'integer',
-            'reservable_id' => 'integer',
+            'space_id' => 'integer',
+            'quantity' => 'integer',
+            'unit_price' => 'decimal:2',
             'starts_at' => 'datetime',
             'ends_at' => 'datetime',
             'total' => 'decimal:2',
@@ -77,14 +69,9 @@ class Reservation extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function reservable(): MorphTo
+    public function space(): BelongsTo
     {
-        return $this->morphTo();
-    }
-
-    public function service(): BelongsTo
-    {
-        return $this->belongsTo(Service::class);
+        return $this->belongsTo(Space::class);
     }
 
     public function payment(): HasOne
@@ -106,9 +93,14 @@ class Reservation extends Model
         return $query->whereIn('status', ReservationStatus::blocking());
     }
 
-    public function scopeOfKind(Builder $query, string $kind): Builder
+    public function scopeBilledBy(Builder $query, BillingUnit|string $unit): Builder
     {
-        return $query->where('reservable_type', $kind);
+        return $query->where('billing_unit', $unit instanceof BillingUnit ? $unit->value : $unit);
+    }
+
+    public function scopeInUnit(Builder $query, int $unitId): Builder
+    {
+        return $query->whereHas('space', fn ($q) => $q->where('unit_id', $unitId));
     }
 
     public function scopeUpcoming(Builder $query): Builder
@@ -124,63 +116,49 @@ class Reservation extends Model
 
     // ── Apresentação ────────────────────────────────────────────
 
-    public function getKindAttribute(): string
-    {
-        return $this->reservable_type;
-    }
-
-    public function getKindLabelAttribute(): string
-    {
-        return self::KINDS[$this->reservable_type] ?? 'Reserva';
-    }
-
     public function getTitleAttribute(): string
     {
-        return match ($this->reservable_type) {
-            self::KIND_ROOM => $this->reservable?->type?->name ?? 'Hospedagem',
-            self::KIND_SPACE => $this->reservable?->name ?? 'Sala',
-            self::KIND_PROFESSIONAL => $this->service?->name ?? 'Serviço',
-            default => 'Reserva',
-        };
+        return $this->space?->name ?? 'Espaço removido';
     }
 
+    /** Nome da categoria: "Sala de reunião". */
+    public function getKindLabelAttribute(): string
+    {
+        return $this->space?->category?->name ?? 'Reserva';
+    }
+
+    /** "Aurora Paulista · São Paulo/SP" */
     public function getSubtitleAttribute(): string
     {
-        return match ($this->reservable_type) {
-            self::KIND_ROOM => 'Quarto '.$this->reservable?->number,
-            self::KIND_SPACE => $this->reservable?->type?->getLabel() ?? '',
-            self::KIND_PROFESSIONAL => 'com '.$this->reservable?->name,
-            default => '',
-        };
+        $unit = $this->space?->unit;
+
+        return $unit ? "{$unit->name} · {$unit->city}/{$unit->state}" : '';
     }
 
     public function getImageUrlAttribute(): string
     {
-        return match ($this->reservable_type) {
-            self::KIND_ROOM => $this->reservable?->type?->cover_url,
-            self::KIND_SPACE => $this->reservable?->image_url,
-            self::KIND_PROFESSIONAL => $this->service?->image_url,
-            default => null,
-        } ?? asset('images/placeholder.svg');
+        return $this->space?->image_url ?? asset('images/placeholder.svg');
     }
 
-    public function getNightsAttribute(): int
+    /** "3 horas", "5 dias", "6 meses" */
+    public function getQuantityLabelAttribute(): string
     {
-        return (int) $this->starts_at->copy()->startOfDay()->diffInDays($this->ends_at->copy()->startOfDay());
+        return $this->billing_unit->quantityLabel($this->quantity);
     }
 
-    /** Texto do período adaptado ao tipo de reserva. */
+    /** Texto do período adaptado à forma de cobrança. */
     public function getPeriodLabelAttribute(): string
     {
-        if ($this->reservable_type === self::KIND_ROOM) {
-            $n = $this->nights;
-
-            return $this->starts_at->translatedFormat('d M').' → '.$this->ends_at->translatedFormat('d M Y')
-                ." · {$n} ".($n === 1 ? 'diária' : 'diárias');
+        if ($this->billing_unit === BillingUnit::Hour) {
+            return mb_convert_case($this->starts_at->translatedFormat('D, d M Y'), MB_CASE_TITLE).' · '
+                .$this->starts_at->format('H:i').'–'.$this->ends_at->format('H:i');
         }
 
-        return mb_convert_case($this->starts_at->translatedFormat('D, d M Y'), MB_CASE_TITLE).' · '
-            .$this->starts_at->format('H:i').'–'.$this->ends_at->format('H:i');
+        if ($this->quantity === 1 && $this->billing_unit === BillingUnit::Day) {
+            return mb_convert_case($this->starts_at->translatedFormat('D, d M Y'), MB_CASE_TITLE).' · dia inteiro';
+        }
+
+        return $this->starts_at->translatedFormat('d M Y').' → '.$this->ends_at->translatedFormat('d M Y').' · '.$this->quantity_label;
     }
 
     /** Pendente (não paga): pode desistir a qualquer momento. Confirmada: até 24h antes do início. */
@@ -188,7 +166,7 @@ class Reservation extends Model
     {
         return match ($this->status) {
             ReservationStatus::Pending => true,
-            ReservationStatus::Confirmed => now()->diffInHours($this->starts_at, false) >= (int) config('hotel.guest_cancellation_hours'),
+            ReservationStatus::Confirmed => now()->diffInHours($this->starts_at, false) >= (int) config('aurora.guest_cancellation_hours'),
             default => false,
         };
     }

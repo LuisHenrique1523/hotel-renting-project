@@ -1,22 +1,23 @@
 <x-filament-panels::page>
-    @unless (auth()->user()->isProfessional())
-        <div class="flex flex-wrap items-center justify-between gap-4">
-            <x-filament::tabs>
-                @foreach (['professional' => ['Spa & Serviços', 'heroicon-m-sparkles'], 'space' => ['Salas', 'heroicon-m-presentation-chart-bar'], 'room' => ['Hospedagem', 'heroicon-m-home-modern'], 'all' => ['Tudo', 'heroicon-m-squares-2x2']] as $key => [$label, $icon])
-                    <x-filament::tabs.item :active="$kind === $key" :icon="$icon" wire:click="setKind('{{ $key }}')">
-                        {{ $label }}
-                    </x-filament::tabs.item>
-                @endforeach
-            </x-filament::tabs>
+    <div class="flex flex-wrap items-center justify-between gap-4">
+        <x-filament::tabs>
+            @foreach ($units as $u)
+                <x-filament::tabs.item :active="$unit === $u->id" icon="heroicon-m-building-office-2" wire:click="setUnit({{ $u->id }})">
+                    {{ $u->name }}
+                </x-filament::tabs.item>
+            @endforeach
+            <x-filament::tabs.item :active="$unit === null" icon="heroicon-m-squares-2x2" wire:click="setUnit(null)">
+                Todas
+            </x-filament::tabs.item>
+        </x-filament::tabs>
 
-            <div class="flex items-center gap-4 text-xs text-gray-500">
-                <span class="flex items-center gap-1.5"><span class="h-3 w-3 rounded" style="background:#C8A15A"></span> Spa</span>
-                <span class="flex items-center gap-1.5"><span class="h-3 w-3 rounded" style="background:#0EA5E9"></span> Salas</span>
-                <span class="flex items-center gap-1.5"><span class="h-3 w-3 rounded" style="background:#2B3F5C"></span> Hospedagem</span>
-                <span class="flex items-center gap-1.5"><span class="ev-legend h-3 w-3 rounded opacity-60" style="background:repeating-linear-gradient(45deg,#C8A15A,#C8A15A 2px,#fff 2px,#fff 4px)"></span> Aguardando pagamento</span>
-            </div>
+        <div class="flex flex-wrap items-center gap-4 text-xs text-gray-500">
+            @foreach (\App\Enums\BillingUnit::cases() as $b)
+                <span class="flex items-center gap-1.5"><span class="h-3 w-3 rounded" style="background:{{ $b->hex() }}"></span> {{ $b->getLabel() }}</span>
+            @endforeach
+            <span class="flex items-center gap-1.5"><span class="h-3 w-3 rounded opacity-60" style="background:repeating-linear-gradient(45deg,#0EA5E9,#0EA5E9 2px,#fff 2px,#fff 4px)"></span> Aguardando pagamento</span>
         </div>
-    @endunless
+    </div>
 
-    @livewire(\App\Filament\Calendar\ReservationCalendarWidget::class, ['kind' => $kind], key('calendar-'.$kind))
+    @livewire(\App\Filament\Calendar\ReservationCalendarWidget::class, ['unit' => $unit], key('calendar-'.($unit ?? 'all')))
 </x-filament-panels::page>

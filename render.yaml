@@ -11,7 +11,7 @@ services:
     healthCheckPath: /up
     envVars:
       - key: APP_NAME
-        value: Aurora Hotel & Spa
+        value: Aurora Workspaces
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
@@ -34,5 +34,5 @@ services:
         value: reservas@aurora.test
       - key: LOG_CHANNEL
         value: stderr
-      - key: HOTEL_DEMO
+      - key: AURORA_DEMO
         value: "true"

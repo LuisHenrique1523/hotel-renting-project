@@ -2,189 +2,137 @@
 
 namespace Database\Seeders;
 
-use App\Enums\RoomStatus;
-use App\Enums\ServiceCategory;
-use App\Enums\SpaceType;
-use App\Enums\UserRole;
-use App\Models\Professional;
-use App\Models\RoomType;
-use App\Models\Service;
+use App\Enums\BillingUnit;
 use App\Models\Space;
-use App\Models\User;
+use App\Models\SpaceCategory;
+use App\Models\Unit;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
-/** Catálogo do hotel: quartos, salas, serviços do spa e profissionais. */
+/**
+ * Catálogo inicial da rede: categorias, unidades e espaços.
+ * Tudo isso também pode ser cadastrado, editado e removido pelo painel (/admin).
+ */
 class CatalogSeeder extends Seeder
 {
     public function run(): void
     {
         DB::transaction(function () {
-            $this->roomTypes();
-            $this->spaces();
-            $this->servicesAndProfessionals();
+            $categories = $this->categories();
+            $this->unitsAndSpaces($categories);
         });
     }
 
-    private function roomTypes(): void
+    /** @return array<string, SpaceCategory> */
+    private function categories(): array
     {
-        $types = [
+        $rows = [
+            ['coworking', 'Coworking', 'Day pass em mesa compartilhada', BillingUnit::Day, 1, 30, 'heroicon-o-computer-desktop', 'cowork-1',
+                'Estações em ambiente compartilhado, com café, internet rápida e áreas de convivência. Chegue, escolha a mesa e trabalhe.'],
+            ['sala-de-reuniao', 'Sala de reunião', 'Para reuniões, entrevistas e videochamadas', BillingUnit::Hour, 1, 10, 'heroicon-o-user-group', 'meeting-4',
+                'Salas equipadas com TV, videoconferência e quadro branco, reservadas por hora cheia.'],
+            ['escritorio-privativo', 'Escritório privativo', 'Sala fechada e mobiliada para a sua equipe', BillingUnit::Month, 1, 12, 'heroicon-o-building-office', 'office-1',
+                'Escritório com chave, mobiliado e pronto para usar. Contrato mensal sem fiador, com recepção e limpeza inclusas.'],
+            ['sala-de-treinamento', 'Sala de treinamento', 'Workshops, cursos e dinâmicas de grupo', BillingUnit::Day, 1, 5, 'heroicon-o-academic-cap', 'training-1',
+                'Salas amplas com layout flexível (escolar, U ou ilhas), projetor e coffee break opcional. Reservadas por dia.'],
+            ['auditorio', 'Auditório', 'Palestras, lançamentos e eventos', BillingUnit::Hour, 2, 12, 'heroicon-o-megaphone', 'auditorium-2',
+                'Auditórios com palco, som, projeção e suporte técnico. Mínimo de 2 horas por reserva.'],
+        ];
+
+        $categories = [];
+        foreach ($rows as $i => [$slug, $name, $tagline, $billing, $min, $max, $icon, $image, $description]) {
+            $categories[$slug] = SpaceCategory::create([
+                'name' => $name, 'slug' => $slug, 'tagline' => $tagline, 'description' => $description,
+                'billing_unit' => $billing, 'min_quantity' => $min, 'max_quantity' => $max,
+                'icon' => $icon, 'image' => "img/{$image}.jpg", 'sort_order' => $i + 1,
+                'is_shared' => $slug === 'coworking',
+            ]);
+        }
+
+        return $categories;
+    }
+
+    /** @param array<string, SpaceCategory> $c */
+    private function unitsAndSpaces(array $c): void
+    {
+        $units = [
             [
-                'name' => 'Standard Jardim', 'tagline' => 'Aconchego com vista para os jardins tropicais',
-                'capacity' => 2, 'size_m2' => 24, 'bed' => 'Cama queen', 'base_price' => 389, 'image' => 'room-1',
-                'amenities' => ['Wi-Fi', 'Ar-condicionado', 'Smart TV', 'Frigobar', 'Café da manhã'],
-                'description' => 'Quarto acolhedor voltado para os jardins internos, ideal para casais que buscam conforto e tranquilidade a poucos passos da piscina.',
-                'rooms' => ['101', '102', '103', '104', '105', '106', '107', '108'], 'floor' => 1,
+                'unit' => [
+                    'name' => 'Aurora Paulista', 'city' => 'São Paulo', 'state' => 'SP', 'neighborhood' => 'Bela Vista',
+                    'address' => 'Av. Paulista, 1500 · 12º andar', 'zip_code' => '01310-200', 'phone' => '(11) 4000-2101',
+                    'opens_hour' => 7, 'closes_hour' => 22, 'image' => 'unit-paulista',
+                    'description' => 'Nossa unidade-sede, no coração da Paulista e a dois minutos do metrô Trianon-Masp. Vista para a avenida, auditório próprio e recepção bilíngue.',
+                    'amenities' => ['Recepção bilíngue', 'Café e água à vontade', 'Wi-Fi 1 Gbps', 'Metrô a 2 min', 'Bicicletário', 'Estacionamento conveniado'],
+                ],
+                'spaces' => [
+                    ['coworking', 'Coworking Paulista', 60, 49, 140, '12º', 'cowork-1', true, 'Salão aberto com 60 estações, cabines de chamada e café especial.', ['Mesa compartilhada', 'Cabines de chamada', 'Armário diário', 'Café especial']],
+                    ['sala-de-reuniao', 'Sala Trianon', 6, 75, 18, '12º', 'meeting-4', true, 'Sala intimista para até 6 pessoas, ideal para entrevistas e reuniões de alinhamento.', ['TV 55"', 'Videoconferência', 'Quadro branco']],
+                    ['sala-de-reuniao', 'Sala Consolação', 12, 140, 32, '12º', 'meeting-1', false, 'Mesa para 12 com vista para a avenida e sistema de videoconferência com câmera 4K.', ['TV 75"', 'Câmera 4K', 'Videoconferência', 'Quadro branco']],
+                    ['escritorio-privativo', 'Escritório 1204', 4, 3900, 16, '12º', 'office-2', false, 'Escritório para 4 pessoas com divisórias de vidro e luz natural.', ['Mobiliado', 'Chave própria', 'Limpeza diária', 'Endereço comercial']],
+                    ['escritorio-privativo', 'Escritório 1210', 8, 6900, 30, '12º', 'office-1', true, 'Escritório para equipes de até 8 pessoas, com sala de reunião interna.', ['Mobiliado', 'Sala de reunião interna', 'Chave própria', 'Endereço comercial']],
+                    ['auditorio', 'Auditório Paulista', 120, 650, 180, 'Térreo', 'auditorium-1', true, 'Auditório climatizado com palco, projeção em alta definição e técnico de som.', ['Palco', 'Projetor 4K', 'Som profissional', 'Técnico de AV', 'Microfones sem fio']],
+                ],
             ],
             [
-                'name' => 'Superior Vista Mar', 'tagline' => 'Acorde com o som das ondas',
-                'capacity' => 2, 'size_m2' => 30, 'bed' => 'Cama king', 'base_price' => 529, 'image' => 'room-2', 'featured' => true,
-                'amenities' => ['Wi-Fi', 'Vista para o mar', 'Varanda', 'Smart TV', 'Cafeteira Nespresso', 'Café da manhã'],
-                'description' => 'Varanda privativa com vista panorâmica para o oceano, cama king e acabamento em madeira natural. O favorito dos nossos hóspedes.',
-                'rooms' => ['201', '202', '203', '204', '205', '206', '207'], 'floor' => 2,
+                'unit' => [
+                    'name' => 'Aurora Faria Lima', 'city' => 'São Paulo', 'state' => 'SP', 'neighborhood' => 'Itaim Bibi',
+                    'address' => 'Av. Brigadeiro Faria Lima, 3477 · 8º andar', 'zip_code' => '04538-133', 'phone' => '(11) 4000-2102',
+                    'opens_hour' => 8, 'closes_hour' => 21, 'image' => 'unit-faria-lima',
+                    'description' => 'Endereço premium no principal polo financeiro do país. Pensada para escritórios de equipes e reuniões com clientes.',
+                    'amenities' => ['Recepção', 'Café e água à vontade', 'Wi-Fi 1 Gbps', 'Phone booths', 'Estacionamento conveniado'],
+                ],
+                'spaces' => [
+                    ['coworking', 'Coworking Faria Lima', 40, 69, 110, '8º', 'cowork-3', false, 'Estações com monitor externo e cadeiras ergonômicas, em ambiente silencioso.', ['Monitor externo', 'Cadeira ergonômica', 'Armário diário']],
+                    ['sala-de-reuniao', 'Sala Itaim', 8, 120, 22, '8º', 'meeting-2', false, 'Sala envidraçada para 8 pessoas com TV e videoconferência.', ['TV 65"', 'Videoconferência', 'Quadro de vidro']],
+                    ['escritorio-privativo', 'Escritório 804', 2, 2900, 10, '8º', 'office-4', false, 'Escritório compacto para duplas, com acesso a todas as áreas comuns.', ['Mobiliado', 'Chave própria', 'Endereço comercial']],
+                    ['escritorio-privativo', 'Escritório 812', 12, 9800, 45, '8º', 'office-3', false, 'Andar corporativo para equipes de até 12 pessoas.', ['Mobiliado', 'Copa privativa', 'Chave própria', 'Endereço comercial']],
+                    ['sala-de-treinamento', 'Sala Pinheiros', 30, 1200, 70, '8º', 'training-2', false, 'Sala de treinamento para 30 pessoas, com layout flexível e projetor.', ['Projetor', 'Layout flexível', 'Coffee break opcional', 'Flip chart']],
+                ],
             ],
             [
-                'name' => 'Deluxe Família', 'tagline' => 'Espaço de sobra para toda a família',
-                'capacity' => 4, 'size_m2' => 42, 'bed' => '2 camas queen', 'base_price' => 689, 'image' => 'room-8',
-                'amenities' => ['Wi-Fi', 'Duas camas queen', 'Smart TV', 'Kit infantil', 'Frigobar', 'Café da manhã'],
-                'description' => 'Amplo e iluminado, com duas camas queen e área de estar. Perfeito para famílias que querem curtir o resort juntas.',
-                'rooms' => ['301', '302', '303', '304', '305'], 'floor' => 3,
+                'unit' => [
+                    'name' => 'Aurora Savassi', 'city' => 'Belo Horizonte', 'state' => 'MG', 'neighborhood' => 'Savassi',
+                    'address' => 'Rua Pernambuco, 1000 · 5º andar', 'zip_code' => '30130-151', 'phone' => '(31) 4000-2103',
+                    'opens_hour' => 8, 'closes_hour' => 20, 'image' => 'unit-savassi',
+                    'description' => 'Na região mais charmosa de BH, cercada de cafés e restaurantes. Ótima para startups e equipes remotas.',
+                    'amenities' => ['Recepção', 'Café e água à vontade', 'Wi-Fi 500 Mb', 'Terraço', 'Bicicletário'],
+                ],
+                'spaces' => [
+                    ['coworking', 'Coworking Savassi', 35, 39, 95, '5º', 'cowork-2', true, 'Coworking com terraço e clima de comunidade, com eventos de networking toda semana.', ['Mesa compartilhada', 'Terraço', 'Eventos de networking']],
+                    ['sala-de-reuniao', 'Sala Liberdade', 10, 90, 24, '5º', 'meeting-3', false, 'Sala com vista da cidade, mesa para 10 e videoconferência.', ['TV 65"', 'Videoconferência', 'Quadro branco']],
+                    ['escritorio-privativo', 'Escritório 502', 6, 3400, 22, '5º', 'office-3', false, 'Escritório para 6 pessoas com janela para a Savassi.', ['Mobiliado', 'Chave própria', 'Endereço comercial']],
+                    ['sala-de-treinamento', 'Sala Mangabeiras', 24, 850, 60, '5º', 'training-1', true, 'Espaço para cursos e workshops com projetor e quadro branco.', ['Projetor', 'Quadro branco', 'Coffee break opcional']],
+                    ['auditorio', 'Auditório Savassi', 80, 420, 120, 'Térreo', 'space-conf', false, 'Auditório para 80 pessoas com som e projeção.', ['Palco', 'Projetor', 'Som profissional']],
+                ],
             ],
             [
-                'name' => 'Suíte Bangalô', 'tagline' => 'Privacidade entre palmeiras',
-                'capacity' => 2, 'size_m2' => 48, 'bed' => 'Cama king', 'base_price' => 890, 'image' => 'room-5', 'featured' => true,
-                'amenities' => ['Wi-Fi', 'Deck privativo', 'Banheira', 'Roupão e chinelos', 'Serviço de quarto 24h', 'Café da manhã'],
-                'description' => 'Bangalô independente cercado de vegetação, com deck privativo, banheira e decoração artesanal. Uma experiência de refúgio.',
-                'rooms' => ['B01', 'B02', 'B03', 'B04'], 'floor' => 0,
-            ],
-            [
-                'name' => 'Suíte Master', 'tagline' => 'Sofisticação em cada detalhe',
-                'capacity' => 3, 'size_m2' => 65, 'bed' => 'Cama king + sofá-cama', 'base_price' => 1290, 'image' => 'room-3', 'featured' => true,
-                'amenities' => ['Wi-Fi', 'Sala de estar', 'Vista para o mar', 'Banheira de hidromassagem', 'Acesso ao lounge VIP', 'Café da manhã'],
-                'description' => 'Suíte com sala de estar separada, hidromassagem e acesso ao lounge VIP. Pensada para quem quer o melhor do Aurora.',
-                'rooms' => ['401', '402', '403'], 'floor' => 4,
-            ],
-            [
-                'name' => 'Suíte Presidencial Aurora', 'tagline' => 'O topo do Aurora, literalmente',
-                'capacity' => 4, 'size_m2' => 120, 'bed' => 'Cama king + quarto extra', 'base_price' => 2490, 'image' => 'room-7',
-                'amenities' => ['Wi-Fi', 'Cobertura panorâmica', 'Mordomo', 'Jacuzzi', 'Adega', 'Transfer incluso', 'Café da manhã'],
-                'description' => 'Cobertura de 120 m² com vista 360°, jacuzzi, adega climatizada e mordomo exclusivo. Para ocasiões inesquecíveis.',
-                'rooms' => ['501'], 'floor' => 5,
+                'unit' => [
+                    'name' => 'Aurora Botafogo', 'city' => 'Rio de Janeiro', 'state' => 'RJ', 'neighborhood' => 'Botafogo',
+                    'address' => 'Praia de Botafogo, 300 · 10º andar', 'zip_code' => '22250-040', 'phone' => '(21) 4000-2104',
+                    'opens_hour' => 8, 'closes_hour' => 20, 'image' => 'unit-botafogo',
+                    'description' => 'Vista para a Baía de Guanabara e o Pão de Açúcar, a poucos passos do metrô Botafogo.',
+                    'amenities' => ['Recepção', 'Café e água à vontade', 'Wi-Fi 1 Gbps', 'Vista para a baía', 'Metrô a 3 min'],
+                ],
+                'spaces' => [
+                    ['coworking', 'Coworking Botafogo', 30, 45, 80, '10º', 'cowork-5', false, 'Estações com vista para a baía e muita luz natural.', ['Mesa compartilhada', 'Vista para a baía', 'Armário diário']],
+                    ['sala-de-reuniao', 'Sala Urca', 8, 95, 20, '10º', 'space-meeting', true, 'Sala de reunião com vista para o Pão de Açúcar.', ['TV 55"', 'Videoconferência', 'Vista para a baía']],
+                    ['escritorio-privativo', 'Escritório 1003', 4, 3200, 18, '10º', 'space-office', false, 'Escritório para 4 pessoas, mobiliado e com janela.', ['Mobiliado', 'Chave própria', 'Endereço comercial']],
+                    ['sala-de-treinamento', 'Sala Guanabara', 20, 780, 50, '10º', 'training-3', false, 'Sala para treinamentos de até 20 pessoas.', ['Projetor', 'Layout flexível', 'Flip chart']],
+                ],
             ],
         ];
 
-        foreach ($types as $data) {
-            $type = RoomType::create([
-                'name' => $data['name'],
-                'tagline' => $data['tagline'],
-                'description' => $data['description'],
-                'capacity' => $data['capacity'],
-                'size_m2' => $data['size_m2'],
-                'bed' => $data['bed'],
-                'base_price' => $data['base_price'],
-                'amenities' => $data['amenities'],
-                'cover_image' => "img/{$data['image']}.jpg",
-                'is_featured' => $data['featured'] ?? false,
-            ]);
+        foreach ($units as $row) {
+            $data = $row['unit'];
+            $unit = Unit::create(['image' => "img/{$data['image']}.jpg"] + $data);
 
-            foreach ($data['rooms'] as $number) {
-                $type->rooms()->create([
-                    'number' => $number,
-                    'floor' => $data['floor'],
-                    'status' => $number === '106' ? RoomStatus::Maintenance : RoomStatus::Available,
+            foreach ($row['spaces'] as [$cat, $name, $capacity, $price, $size, $floor, $image, $featured, $description, $amenities]) {
+                Space::create([
+                    'unit_id' => $unit->id, 'space_category_id' => $c[$cat]->id,
+                    'name' => $name, 'description' => $description, 'capacity' => $capacity, 'price' => $price,
+                    'size_m2' => $size, 'floor' => $floor, 'image' => "img/{$image}.jpg",
+                    'is_featured' => $featured, 'amenities' => $amenities,
                 ]);
-            }
-        }
-    }
-
-    private function spaces(): void
-    {
-        $spaces = [
-            ['Sala Executiva Atlântico', SpaceType::Meeting, 12, 180, 'space-meeting', 8, 20,
-                'Sala de reuniões com mesa para 12 pessoas, vista para o mar e tela de 75". Ideal para diretorias e negociações.',
-                ['Tela 75"', 'Videoconferência', 'Wi-Fi dedicado', 'Coffee break opcional', 'Quadro branco']],
-            ['Lounge Coworking Brisa', SpaceType::Coworking, 20, 60, 'space-cowork', 7, 22,
-                'Espaço de trabalho compartilhado com estações individuais, café à vontade e muita luz natural.',
-                ['Estações individuais', 'Café e água', 'Wi-Fi 1 Gbps', 'Cabines de chamada']],
-            ['Auditório Horizonte', SpaceType::Event, 120, 650, 'space-conf', 8, 23,
-                'Auditório climatizado com projeção em alta definição, sonorização e palco. Perfeito para palestras e lançamentos.',
-                ['Projetor 4K', 'Som profissional', '2 microfones sem fio', 'Palco', 'Técnico de AV']],
-            ['Salão Grand Aurora', SpaceType::Event, 250, 1200, 'space-event', 10, 23,
-                'Nosso salão de festas com lustres de cristal, pista de dança e cozinha de apoio para casamentos e celebrações.',
-                ['Lustres de cristal', 'Pista de dança', 'Cozinha de apoio', 'Iluminação cênica', 'Camarim']],
-        ];
-
-        foreach ($spaces as [$name, $type, $capacity, $price, $image, $opens, $closes, $description, $amenities]) {
-            Space::create([
-                'name' => $name, 'type' => $type, 'capacity' => $capacity, 'hourly_price' => $price,
-                'image' => "img/{$image}.jpg", 'opens_hour' => $opens, 'closes_hour' => $closes,
-                'description' => $description, 'amenities' => $amenities,
-            ]);
-        }
-    }
-
-    private function servicesAndProfessionals(): void
-    {
-        $services = collect([
-            ['Massagem Relaxante', ServiceCategory::Spa, 60, 280, 'spa-massage', 'Movimentos suaves e óleos aquecidos para aliviar tensões e restaurar o equilíbrio do corpo.'],
-            ['Pedras Quentes', ServiceCategory::Spa, 90, 390, 'spa-stones', 'Pedras vulcânicas aquecidas relaxam a musculatura profunda e melhoram a circulação.'],
-            ['Aromaterapia', ServiceCategory::Spa, 50, 240, 'spa-pool', 'Óleos essenciais selecionados para acalmar a mente e renovar as energias.'],
-            ['Ritual Day Spa Aurora', ServiceCategory::Spa, 120, 520, 'spa-room', 'Esfoliação, massagem completa e chá de ervas: duas horas só para você.'],
-            ['Massagem Desportiva', ServiceCategory::Spa, 60, 300, 'spa-stones', 'Técnicas de alongamento e pressão para recuperação muscular após atividades físicas.'],
-            ['Limpeza de Pele', ServiceCategory::Wellness, 60, 220, 'spa-facial', 'Higienização profunda, extração e máscara hidratante com cosméticos naturais.'],
-            ['Drenagem Linfática', ServiceCategory::Wellness, 60, 260, 'spa-room', 'Massagem com movimentos leves e ritmados que reduzem inchaço e desintoxicam.'],
-            ['Yoga ao Pôr do Sol', ServiceCategory::Fitness, 60, 120, 'fit-yoga', 'Aula particular de yoga no deck à beira-mar, para todos os níveis.'],
-            ['Personal Training', ServiceCategory::Fitness, 60, 180, 'fit-gym', 'Treino personalizado na academia do hotel com avaliação rápida inicial.'],
-        ])->mapWithKeys(fn ($s) => [$s[0] => Service::create([
-            'name' => $s[0], 'category' => $s[1], 'duration_min' => $s[2], 'price' => $s[3],
-            'image' => "img/{$s[4]}.jpg", 'description' => $s[5],
-        ])]);
-
-        // [nome, e-mail, especialidade, foto, serviços, turnos por dia da semana]
-        $split = [['09:00', '13:00'], ['14:00', '19:00']];
-        $pros = [
-            ['Camila Duarte', 'spa@aurora.test', 'Massoterapeuta', 'pro-1',
-                ['Massagem Relaxante', 'Pedras Quentes', 'Aromaterapia', 'Ritual Day Spa Aurora'],
-                [2 => $split, 3 => $split, 4 => $split, 5 => $split, 6 => $split, 0 => [['10:00', '16:00']]],
-                'Especialista em terapias relaxantes, com 10 anos de experiência em spas de resorts.'],
-            ['Rafael Mendes', 'rafael@aurora.test', 'Massoterapeuta desportivo', 'pro-2',
-                ['Massagem Relaxante', 'Massagem Desportiva', 'Pedras Quentes'],
-                [1 => [['10:00', '18:00']], 2 => [['10:00', '18:00']], 3 => [['10:00', '18:00']], 4 => [['10:00', '18:00']], 5 => [['10:00', '18:00']], 6 => [['09:00', '14:00']]],
-                'Fisioterapeuta de formação, focado em recuperação muscular e bem-estar ativo.'],
-            ['Helena Prado', 'helena@aurora.test', 'Esteticista', 'pro-3',
-                ['Limpeza de Pele', 'Drenagem Linfática', 'Aromaterapia'],
-                [1 => [['09:00', '17:00']], 2 => [['09:00', '17:00']], 3 => [['09:00', '17:00']], 4 => [['09:00', '17:00']], 5 => [['09:00', '17:00']], 6 => [['09:00', '13:00']]],
-                'Cuida da sua pele com cosméticos naturais e protocolos personalizados.'],
-            ['Bruno Tavares', 'bruno@aurora.test', 'Personal trainer', 'pro-4',
-                ['Personal Training'],
-                [1 => [['06:00', '12:00']], 2 => [['06:00', '12:00']], 3 => [['06:00', '12:00']], 4 => [['06:00', '12:00']], 5 => [['06:00', '12:00']], 6 => [['07:00', '11:00']]],
-                'Educador físico especializado em treinos funcionais e de alta performance.'],
-            ['Lívia Araújo', 'livia@aurora.test', 'Instrutora de yoga', 'pro-5',
-                ['Yoga ao Pôr do Sol'],
-                collect(range(0, 6))->mapWithKeys(fn ($d) => [$d => [['06:00', '09:00'], ['16:00', '19:00']]])->all(),
-                'Professora de Hatha e Vinyasa Yoga, certificada pela Yoga Alliance.'],
-            ['Jorge Almeida', 'jorge@aurora.test', 'Terapeuta corporal', 'pro-6',
-                ['Massagem Desportiva', 'Drenagem Linfática', 'Massagem Relaxante'],
-                [3 => [['08:00', '16:00']], 4 => [['08:00', '16:00']], 5 => [['08:00', '16:00']], 6 => [['08:00', '16:00']], 0 => [['08:00', '14:00']]],
-                'Mais de 20 anos dedicados a terapias corporais e reabilitação.'],
-        ];
-
-        foreach ($pros as [$name, $email, $specialty, $photo, $serviceNames, $schedule, $bio]) {
-            $user = User::create([
-                'name' => $name, 'email' => $email, 'password' => DatabaseSeeder::demoPassword(),
-                'role' => UserRole::Professional, 'email_verified_at' => now(),
-            ]);
-
-            $pro = Professional::create([
-                'user_id' => $user->id, 'specialty' => $specialty, 'bio' => $bio, 'photo' => "img/{$photo}.jpg",
-            ]);
-
-            $pro->services()->attach($services->only($serviceNames)->pluck('id'));
-
-            foreach ($schedule as $weekday => $shifts) {
-                foreach ($shifts as [$start, $end]) {
-                    $pro->workingHours()->create(['weekday' => $weekday, 'start_time' => $start, 'end_time' => $end]);
-                }
             }
         }
     }

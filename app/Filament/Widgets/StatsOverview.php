@@ -2,8 +2,9 @@
 
 namespace App\Filament\Widgets;
 
+use App\Enums\BillingUnit;
 use App\Models\Reservation;
-use App\Models\Room;
+use App\Models\Space;
 use Carbon\CarbonImmutable;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -22,33 +23,34 @@ class StatsOverview extends BaseWidget
     protected function getStats(): array
     {
         $today = CarbonImmutable::today();
-        $operational = max(1, Room::operational()->count());
+        $active = max(1, Space::bookable()->count());
 
-        // Ocupação de uma noite = quartos com reserva ativa às 20h daquele dia
-        $occupancy = fn (CarbonImmutable $day) => (int) round(100 * Reservation::ofKind('room')->blocking()
-            ->overlapping($day->setTime(20, 0), $day->setTime(20, 1))->count() / $operational);
+        // Ocupação do dia = espaços ativos com pelo menos uma reserva ativa naquele dia
+        $occupancy = fn (CarbonImmutable $day) => (int) round(100 * Reservation::blocking()
+            ->overlapping($day->setTime(6, 0), $day->setTime(23, 0))
+            ->distinct()->count('space_id') / $active);
         $occTrend = collect(range(6, 0))->map(fn ($i) => $occupancy($today->subDays($i)))->all();
 
-        $arrivals = Reservation::ofKind('room')->blocking()->whereDate('starts_at', $today)->count();
-        $departures = Reservation::ofKind('room')->blocking()->whereDate('ends_at', $today)->count();
+        $startingToday = Reservation::blocking()->whereDate('starts_at', $today);
+        $next = (clone $startingToday)->billedBy(BillingUnit::Hour)->where('starts_at', '>=', now())->orderBy('starts_at')->with('space')->first();
 
         // Receita prevista do mês (reservas pagas) e quanto dela já foi realizado até hoje
         $monthRevenue = (float) Reservation::revenue()->whereBetween('starts_at', [$today->startOfMonth(), $today->endOfMonth()])->sum('total');
         $mtd = (float) Reservation::revenue()->whereBetween('starts_at', [$today->startOfMonth(), $today->endOfDay()])->sum('total');
         $revTrend = collect(range(13, 0))->map(fn ($i) => (float) Reservation::revenue()->whereDate('starts_at', $today->subDays($i))->sum('total'))->all();
 
-        $hourly = Reservation::whereIn('reservable_type', ['space', 'professional'])->blocking()->whereDate('starts_at', $today);
-        $next = (clone $hourly)->where('starts_at', '>=', now())->orderBy('starts_at')->with('service', 'reservable')->first();
+        $contracts = Reservation::billedBy(BillingUnit::Month)->blocking()->where('ends_at', '>', now())->where('starts_at', '<=', now());
+        $mrr = (float) (clone $contracts)->sum('unit_price');
 
         return [
-            Stat::make('Ocupação esta noite', end($occTrend).'%')
-                ->description(Room::operational()->count().' quartos operacionais')
-                ->descriptionIcon('heroicon-m-home-modern')
+            Stat::make('Ocupação hoje', end($occTrend).'%')
+                ->description("dos {$active} espaços ativos têm reserva")
+                ->descriptionIcon('heroicon-m-building-office-2')
                 ->chart($occTrend)->color('primary'),
 
-            Stat::make('Chegadas hoje', $arrivals)
-                ->description($departures.' '.($departures === 1 ? 'saída prevista' : 'saídas previstas'))
-                ->descriptionIcon('heroicon-m-arrows-right-left')
+            Stat::make('Reservas que começam hoje', (clone $startingToday)->count())
+                ->description($next ? 'Próxima: '.$next->starts_at->format('H:i').' · '.$next->space?->name : 'Sem mais reservas por hora hoje')
+                ->descriptionIcon('heroicon-m-clock')
                 ->color('info'),
 
             Stat::make('Receita prevista no mês', 'R$ '.number_format($monthRevenue, 0, ',', '.'))
@@ -56,9 +58,9 @@ class StatsOverview extends BaseWidget
                 ->descriptionIcon('heroicon-m-banknotes')
                 ->chart($revTrend)->color('success'),
 
-            Stat::make('Spa e salas hoje', $hourly->count())
-                ->description($next ? 'Próximo: '.$next->starts_at->format('H:i').' · '.$next->title : 'Sem mais atendimentos hoje')
-                ->descriptionIcon('heroicon-m-sparkles')
+            Stat::make('Contratos mensais ativos', $contracts->count())
+                ->description('R$ '.number_format($mrr, 0, ',', '.').' de receita recorrente por mês')
+                ->descriptionIcon('heroicon-m-key')
                 ->color('warning'),
         ];
     }

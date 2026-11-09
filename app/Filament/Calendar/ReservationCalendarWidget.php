@@ -2,8 +2,11 @@
 
 namespace App\Filament\Calendar;
 
+use App\Enums\BillingUnit;
 use App\Filament\Resources\ReservationResource;
+use App\Filament\Resources\SpaceResource;
 use App\Models\Reservation;
+use Carbon\CarbonImmutable;
 use Saade\FilamentFullCalendar\Widgets\FullCalendarWidget;
 
 /**
@@ -12,13 +15,8 @@ use Saade\FilamentFullCalendar\Widgets\FullCalendarWidget;
  */
 class ReservationCalendarWidget extends FullCalendarWidget
 {
-    public string $kind = 'professional';
-
-    private const COLORS = [
-        'room' => '#2B3F5C',
-        'space' => '#0EA5E9',
-        'professional' => '#C8A15A',
-    ];
+    /** Unidade filtrada (null = todas). */
+    public ?int $unit = null;
 
     protected function headerActions(): array
     {
@@ -33,13 +31,16 @@ class ReservationCalendarWidget extends FullCalendarWidget
     public function config(): array
     {
         return [
-            'initialView' => $this->kind === 'room' ? 'dayGridMonth' : 'timeGridWeek',
+            'initialView' => 'timeGridWeek',
             'headerToolbar' => [
                 'left' => 'prev,next today',
                 'center' => 'title',
                 'right' => 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
             ],
             'displayEventEnd' => true,
+            // Diárias, contratos mensais e lotação do coworking ficam na faixa "dia inteiro"
+            'allDaySlot' => true,
+            'allDayText' => 'Dia todo',
             'eventMaxStack' => 3,
             'slotEventOverlap' => false,
         ];
@@ -47,35 +48,67 @@ class ReservationCalendarWidget extends FullCalendarWidget
 
     public function fetchEvents(array $info): array
     {
-        return ReservationResource::getEloquentQuery()
+        // O FullCalendar manda strings ISO com fuso; converter antes de comparar no banco
+        // (no SQLite a comparação seria de texto e perderia eventos do primeiro dia)
+        $from = CarbonImmutable::parse($info['start'])->setTimezone(config('app.timezone'));
+        $to = CarbonImmutable::parse($info['end'])->setTimezone(config('app.timezone'));
+
+        $reservations = ReservationResource::getEloquentQuery()
             ->blocking()
-            ->where('starts_at', '<', $info['end'])
-            ->where('ends_at', '>', $info['start'])
-            ->when($this->kind !== 'all', fn ($q) => $q->where('reservable_type', $this->kind))
-            ->limit(800)
-            ->get()
-            ->map(fn (Reservation $r) => [
+            ->overlapping($from, $to)
+            ->when($this->unit, fn ($q, $id) => $q->inUnit($id))
+            ->limit(1500)
+            ->get();
+
+        // Coworking (compartilhado) tem dezenas de reservas por dia: vira um evento por dia com a lotação
+        [$shared, $exclusive] = $reservations->partition(fn (Reservation $r) => $r->space?->is_shared);
+
+        return [
+            ...$exclusive->map(fn (Reservation $r) => [
                 'id' => $r->id,
-                'title' => $this->title($r),
-                'start' => $r->starts_at->toIso8601String(),
-                'end' => $r->ends_at->toIso8601String(),
+                'title' => $r->space?->name.' · '.strtok($r->user?->name ?? '', ' ').($this->unit ? '' : ' · '.$r->space?->unit?->name),
+                ...($r->billing_unit === BillingUnit::Hour
+                    ? ['start' => $r->starts_at->toIso8601String(), 'end' => $r->ends_at->toIso8601String()]
+                    : ['start' => $r->starts_at->toDateString(), 'end' => $r->ends_at->addDay()->toDateString(), 'allDay' => true]),
                 'url' => ReservationResource::getUrl('view', ['record' => $r]),
-                'backgroundColor' => self::COLORS[$r->reservable_type],
-                'borderColor' => self::COLORS[$r->reservable_type],
-                'textColor' => $r->reservable_type === 'professional' ? '#0F1E33' : '#FFFFFF',
+                'backgroundColor' => $r->billing_unit->hex(),
+                'borderColor' => $r->billing_unit->hex(),
+                'textColor' => '#FFFFFF',
                 'classNames' => $r->status->value === 'pending' ? ['ev-pending'] : [],
-            ])
-            ->all();
+            ])->values()->all(),
+            ...$this->sharedOccupancy($shared, $from, $to),
+        ];
     }
 
-    private function title(Reservation $r): string
+    /** Agrega as reservas de espaços compartilhados em "Coworking X · N/capacidade" por dia. */
+    private function sharedOccupancy($reservations, CarbonImmutable $from, CarbonImmutable $to): array
     {
-        $guest = strtok($r->user?->name ?? '', ' ');
+        $events = [];
 
-        return match ($r->reservable_type) {
-            'room' => "Q{$r->reservable?->number} · {$guest}",
-            'space' => "{$r->reservable?->name} · {$guest}",
-            default => "{$r->service?->name} · ".strtok($r->reservable?->name ?? '', ' '),
-        };
+        foreach ($reservations->groupBy('space_id') as $items) {
+            $space = $items->first()->space;
+            $unit = $space->unit;
+
+            for ($day = $from->startOfDay(); $day < $to; $day = $day->addDay()) {
+                $start = $day->setTime($unit->opens_hour, 0);
+                $end = $day->setTime($unit->closes_hour, 0);
+                $people = $items->filter(fn (Reservation $r) => $r->starts_at < $end && $r->ends_at > $start)->sum('guests');
+
+                if ($people > 0) {
+                    $events[] = [
+                        'id' => "shared-{$space->id}-{$day->toDateString()}",
+                        'title' => "{$space->name} · {$people}/{$space->capacity} pessoas",
+                        'start' => $day->toDateString(),
+                        'allDay' => true,
+                        'url' => SpaceResource::getUrl('edit', ['record' => $space]),
+                        'backgroundColor' => '#C8A15A33',
+                        'borderColor' => '#C8A15A',
+                        'textColor' => '#7A5A1E',
+                    ];
+                }
+            }
+        }
+
+        return $events;
     }
 }

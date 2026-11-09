@@ -2,25 +2,29 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Professional;
-use App\Models\Room;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
+use App\Models\SpaceCategory;
+use App\Models\Unit;
 use Illuminate\View\View;
 
 class HomeController extends Controller
 {
     public function __invoke(): View
     {
+        $units = Unit::active()->withCount(['spaces' => fn ($q) => $q->bookable()])->orderBy('city')->get();
+
         return view('site.home', [
-            'featuredRooms' => RoomType::where('is_featured', true)->orderBy('base_price')->take(3)->get(),
-            'services' => Service::where('is_active', true)->orderBy('price')->take(5)->get(),
-            'spaces' => Space::where('is_active', true)->orderBy('capacity')->get(),
+            'units' => $units,
+            'cities' => $units->pluck('city')->unique()->values(),
+            'categories' => SpaceCategory::active()->ordered()
+                ->withCount(['spaces' => fn ($q) => $q->bookable()])
+                ->withMin(['spaces' => fn ($q) => $q->bookable()], 'price')
+                ->get(),
+            'featured' => Space::bookable()->with('unit', 'category')->where('is_featured', true)->orderBy('price')->take(4)->get(),
             'stats' => [
-                'rooms' => Room::count(),
-                'professionals' => Professional::where('is_active', true)->count(),
-                'spaces' => Space::count(),
+                'units' => $units->count(),
+                'cities' => $units->pluck('city')->unique()->count(),
+                'spaces' => Space::bookable()->count(),
             ],
         ]);
     }

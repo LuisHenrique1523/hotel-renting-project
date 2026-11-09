@@ -2,19 +2,17 @@
 
 namespace Tests\Feature;
 
+use App\Enums\BillingUnit;
+use App\Enums\PaymentMethod;
 use App\Enums\ReservationStatus;
-use App\Enums\ServiceCategory;
-use App\Enums\SpaceType;
 use App\Enums\UserRole;
 use App\Exceptions\ReservationException;
 use App\Mail\ReservationStatusMail;
-use App\Models\Professional;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
+use App\Models\SpaceCategory;
+use App\Models\Unit;
 use App\Models\User;
 use App\Services\AvailabilityService;
-use App\Services\PricingService;
 use App\Services\ReservationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -27,148 +25,174 @@ class ReservationEngineTest extends TestCase
 
     private ReservationService $engine;
     private User $guest;
+    private Unit $unit;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        // Segunda-feira, 10h: datas previsíveis para diárias e expediente
+        // Segunda-feira, 10h: datas previsíveis
         $this->travelTo(CarbonImmutable::parse('2026-11-02 10:00:00'));
 
         $this->engine = app(ReservationService::class);
         $this->guest = User::factory()->create(['role' => UserRole::Guest]);
+        $this->unit = Unit::create([
+            'name' => 'Unidade Teste', 'city' => 'São Paulo', 'state' => 'SP', 'address' => 'Rua X, 1',
+            'description' => 'x', 'opens_hour' => 8, 'closes_hour' => 20,
+        ]);
     }
 
-    private function roomType(int $rooms = 1, float $price = 500): RoomType
+    private function space(BillingUnit $billing, float $price = 100, int $capacity = 10, bool $shared = false, int $min = 1, int $max = 12): Space
     {
-        $type = RoomType::create([
-            'name' => 'Suíte Teste', 'description' => 'x', 'capacity' => 2, 'base_price' => $price,
+        $category = SpaceCategory::create([
+            'name' => 'Cat '.$billing->value.($shared ? ' shared' : '').uniqid(), 'billing_unit' => $billing,
+            'min_quantity' => $min, 'max_quantity' => $max, 'is_shared' => $shared,
         ]);
 
-        foreach (range(1, $rooms) as $n) {
-            $type->rooms()->create(['number' => (string) (100 + $n), 'floor' => 1]);
-        }
-
-        return $type;
+        return Space::create([
+            'unit_id' => $this->unit->id, 'space_category_id' => $category->id, 'name' => 'Espaço '.uniqid(),
+            'description' => 'x', 'capacity' => $capacity, 'price' => $price,
+        ])->load('unit', 'category');
     }
 
-    private function professional(): array
-    {
-        $service = Service::create([
-            'name' => 'Massagem', 'category' => ServiceCategory::Spa, 'description' => 'x',
-            'duration_min' => 60, 'price' => 280,
-        ]);
-        $user = User::factory()->create(['role' => UserRole::Professional]);
-        $pro = Professional::create(['user_id' => $user->id, 'specialty' => 'Massoterapeuta']);
-        $pro->services()->attach($service);
-        // Terça-feira, 09h às 13h
-        $pro->workingHours()->create(['weekday' => 2, 'start_time' => '09:00', 'end_time' => '13:00']);
+    // ── Janela e preço por forma de cobrança ──────────────────
 
-        return [$pro, $service];
+    public function test_hourly_booking_uses_whole_hours_and_charges_per_hour(): void
+    {
+        $space = $this->space(BillingUnit::Hour, price: 150);
+
+        $r = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), 3, 5);
+
+        $this->assertEquals('2026-11-04 12:00:00', $r->ends_at->toDateTimeString());
+        $this->assertEquals(450, $r->total);
+        $this->assertSame('3 horas', $r->quantity_label);
     }
 
-    // ── Preço ───────────────────────────────────────────────────
-
-    public function test_room_price_adds_weekend_surcharge_on_friday_and_saturday(): void
+    public function test_daily_booking_covers_opening_hours_of_each_day(): void
     {
-        $type = $this->roomType(price: 100);
+        $space = $this->space(BillingUnit::Day, price: 200);
 
-        // Qui → Dom: noites de quinta (100), sexta (120) e sábado (120)
-        $quote = app(PricingService::class)->quoteRoom($type, CarbonImmutable::parse('2026-11-05'), CarbonImmutable::parse('2026-11-08'));
+        $r = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-05'), 3, 4);
 
-        $this->assertSame(3, $quote['nights']);
-        $this->assertSame(340.0, $quote['total']);
+        $this->assertEquals('2026-11-05 08:00:00', $r->starts_at->toDateTimeString());
+        $this->assertEquals('2026-11-07 20:00:00', $r->ends_at->toDateTimeString());
+        $this->assertEquals(600, $r->total);
     }
 
-    // ── Conflito de horários: a regra central ─────────────────
-
-    public function test_same_room_cannot_be_booked_twice_for_overlapping_dates(): void
+    public function test_monthly_contract_ends_the_day_before_the_same_date_n_months_later(): void
     {
-        $type = $this->roomType(rooms: 1);
+        $space = $this->space(BillingUnit::Month, price: 3000);
 
-        $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
+        $r = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-10'), 2, 4);
+
+        $this->assertEquals('2026-11-10 08:00:00', $r->starts_at->toDateTimeString());
+        $this->assertEquals('2027-01-09 20:00:00', $r->ends_at->toDateTimeString());
+        $this->assertEquals(6000, $r->total);
+    }
+
+    // ── Conflito: a regra central ─────────────────────────────
+
+    public function test_exclusive_space_cannot_be_booked_twice_in_overlapping_hours(): void
+    {
+        $space = $this->space(BillingUnit::Hour);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), 3);
 
         $this->expectException(ReservationException::class);
-        $this->engine->bookRoom($this->guest, $type, now()->addDays(7), now()->addDays(9), 2);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 11:00'), 2);
     }
 
-    public function test_back_to_back_stays_are_allowed_because_checkout_is_before_checkin(): void
+    public function test_back_to_back_hours_are_allowed(): void
     {
-        $type = $this->roomType(rooms: 1);
+        $space = $this->space(BillingUnit::Hour);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), 2);
+        $second = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 11:00'), 2);
 
-        $first = $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
-        $second = $this->engine->bookRoom($this->guest, $type, now()->addDays(8), now()->addDays(10), 2);
-
-        $this->assertSame($first->reservable_id, $second->reservable_id);
+        $this->assertSame(ReservationStatus::Pending, $second->status);
     }
 
-    public function test_engine_allocates_another_room_of_the_same_type_when_one_is_taken(): void
+    public function test_monthly_contract_blocks_daily_and_hourly_use_of_the_same_space(): void
     {
-        $type = $this->roomType(rooms: 2);
+        $space = $this->space(BillingUnit::Month);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-10'), 1);
 
-        $a = $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
-        $b = $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
-
-        $this->assertNotSame($a->reservable_id, $b->reservable_id);
-        $this->assertSame(0, app(AvailabilityService::class)->freeRoomsCount($type, now()->addDays(5), now()->addDays(8)));
+        // Mesma janela por outra reserva mensal começando no meio do contrato
+        $this->expectException(ReservationException::class);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-25'), 1);
     }
 
-    public function test_cancelling_frees_the_slot(): void
+    public function test_shared_space_accepts_reservations_until_capacity(): void
     {
-        $type = $this->roomType(rooms: 1);
-        $reservation = $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
+        $space = $this->space(BillingUnit::Day, price: 50, capacity: 5, shared: true);
+        $day = CarbonImmutable::parse('2026-11-05');
+
+        $a = $this->engine->book($this->guest, $space, $day, 1, 3);
+        $this->engine->book($this->guest, $space, $day, 1, 2);
+
+        $this->assertEquals(150, $a->total); // preço por pessoa: 3 × R$ 50
+        $this->assertSame(0, $space->seatsLeftBetween(...app(AvailabilityService::class)->window($space, $day, 1)));
+
+        $this->expectExceptionMessage('Não há vaga');
+        $this->engine->book($this->guest, $space, $day, 1, 1);
+    }
+
+    public function test_cancelling_frees_the_period(): void
+    {
+        $space = $this->space(BillingUnit::Day);
+        $reservation = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-05'), 2);
 
         $this->engine->cancel($reservation, $this->guest);
-        $again = $this->engine->bookRoom($this->guest, $type, now()->addDays(5), now()->addDays(8), 2);
+        $again = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-05'), 2);
 
         $this->assertSame(ReservationStatus::Pending, $again->status);
     }
 
-    public function test_professional_cannot_have_two_appointments_at_the_same_time(): void
+    // ── Regras da categoria e da unidade ──────────────────────
+
+    public function test_category_minimum_duration_is_enforced(): void
     {
-        [$pro, $service] = $this->professional();
+        $space = $this->space(BillingUnit::Hour, min: 2);
 
-        $this->engine->bookService($this->guest, $pro, $service, CarbonImmutable::parse('2026-11-03 10:00'));
-
-        $this->expectException(ReservationException::class);
-        $this->engine->bookService($this->guest, $pro, $service, CarbonImmutable::parse('2026-11-03 10:30'));
+        $this->expectExceptionMessage('reserve de 2 horas');
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), 1);
     }
 
-    public function test_professional_booking_outside_working_hours_is_rejected(): void
+    public function test_hourly_booking_must_fit_unit_opening_hours(): void
     {
-        [$pro, $service] = $this->professional();
+        $space = $this->space(BillingUnit::Hour);
 
-        $this->expectExceptionMessage('Fora do horário');
-        $this->engine->bookService($this->guest, $pro, $service, CarbonImmutable::parse('2026-11-03 12:30'));
+        $this->expectExceptionMessage('Funcionamento da unidade');
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 19:00'), 2); // fecha às 20h
     }
 
-    public function test_professional_slots_reflect_existing_bookings(): void
+    public function test_capacity_is_enforced(): void
     {
-        [$pro, $service] = $this->professional();
-        $this->engine->bookService($this->guest, $pro, $service, CarbonImmutable::parse('2026-11-03 10:00'));
+        $space = $this->space(BillingUnit::Hour, capacity: 6);
 
-        $slots = collect(app(AvailabilityService::class)->professionalSlots($pro, $service, CarbonImmutable::parse('2026-11-03')))
-            ->keyBy('time');
+        $this->expectExceptionMessage('Capacidade máxima');
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), 1, 7);
+    }
 
+    public function test_inactive_unit_makes_spaces_unbookable(): void
+    {
+        $space = $this->space(BillingUnit::Hour);
+        $this->unit->update(['is_active' => false]);
+
+        $this->expectExceptionMessage('não está disponível');
+        $this->engine->book($this->guest, $space->fresh(['unit', 'category']), CarbonImmutable::parse('2026-11-04 09:00'), 1);
+    }
+
+    public function test_hour_slots_reflect_existing_bookings(): void
+    {
+        $space = $this->space(BillingUnit::Hour);
+        $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-03 10:00'), 2);
+
+        $slots = collect(app(AvailabilityService::class)->hourSlots($space, CarbonImmutable::parse('2026-11-03')))->keyBy('time');
+
+        $this->assertCount(12, $slots); // 08h às 20h
         $this->assertTrue($slots['09:00']['available']);
-        $this->assertSame('busy', $slots['09:30']['reason']); // 09:30–10:30 colide
         $this->assertSame('busy', $slots['10:00']['reason']);
-        $this->assertTrue($slots['11:00']['available']);
-        $this->assertArrayNotHasKey('12:30', $slots->all()); // não cabe 60min antes das 13h
-    }
-
-    public function test_space_is_booked_by_whole_hours_inside_opening_time(): void
-    {
-        $space = Space::create([
-            'name' => 'Sala Teste', 'type' => SpaceType::Meeting, 'description' => 'x', 'capacity' => 10,
-            'hourly_price' => 150, 'opens_hour' => 8, 'closes_hour' => 20,
-        ]);
-
-        $r = $this->engine->bookSpace($this->guest, $space, CarbonImmutable::parse('2026-11-04 09:00'), CarbonImmutable::parse('2026-11-04 12:00'), 5);
-        $this->assertEquals(450, $r->total);
-
-        $this->expectException(ReservationException::class);
-        $this->engine->bookSpace($this->guest, $space, CarbonImmutable::parse('2026-11-04 11:00'), CarbonImmutable::parse('2026-11-04 13:00'), 5);
+        $this->assertSame('busy', $slots['11:00']['reason']);
+        $this->assertTrue($slots['12:00']['available']);
     }
 
     // ── Máquina de estados ─────────────────────────────────────
@@ -176,9 +200,9 @@ class ReservationEngineTest extends TestCase
     public function test_payment_confirms_reservation_and_sends_email(): void
     {
         Mail::fake();
-        $reservation = $this->engine->bookRoom($this->guest, $this->roomType(), now()->addDays(5), now()->addDays(6), 1);
+        $reservation = $this->engine->book($this->guest, $this->space(BillingUnit::Day), CarbonImmutable::parse('2026-11-05'), 1);
 
-        $this->engine->pay($reservation, \App\Enums\PaymentMethod::Pix);
+        $this->engine->pay($reservation, PaymentMethod::Pix);
 
         $this->assertSame(ReservationStatus::Confirmed, $reservation->fresh()->status);
         $this->assertSame('paid', $reservation->payment->fresh()->status->value);
@@ -187,7 +211,7 @@ class ReservationEngineTest extends TestCase
 
     public function test_invalid_status_transition_is_blocked(): void
     {
-        $reservation = $this->engine->bookRoom($this->guest, $this->roomType(), now()->addDays(5), now()->addDays(6), 1);
+        $reservation = $this->engine->book($this->guest, $this->space(BillingUnit::Day), CarbonImmutable::parse('2026-11-05'), 1);
 
         $this->expectException(ReservationException::class);
         $this->engine->checkIn($reservation); // pendente não pode fazer check-in
@@ -195,13 +219,13 @@ class ReservationEngineTest extends TestCase
 
     public function test_guest_cannot_cancel_less_than_24h_before_but_staff_can(): void
     {
-        $type = $this->roomType();
-        $reservation = $this->engine->bookRoom($this->guest, $type, today(), today()->addDay(), 1); // hoje às 14h
+        $space = $this->space(BillingUnit::Hour);
+        $reservation = $this->engine->book($this->guest, $space, CarbonImmutable::parse('2026-11-02 15:00'), 1); // hoje às 15h
         $this->engine->confirm($reservation);
 
         try {
             $this->engine->cancel($reservation, $this->guest);
-            $this->fail('Hóspede não deveria conseguir cancelar.');
+            $this->fail('Cliente não deveria conseguir cancelar.');
         } catch (ReservationException) {
         }
 

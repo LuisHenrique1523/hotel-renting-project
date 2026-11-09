@@ -19,7 +19,7 @@ class ViewReservation extends ViewRecord
     {
         return [
             ...ReservationResource::workflowActions(Actions\Action::class),
-            Actions\Action::make('email')->label('E-mail ao hóspede')->icon('heroicon-o-envelope')->color('gray')
+            Actions\Action::make('email')->label('E-mail ao cliente')->icon('heroicon-o-envelope')->color('gray')
                 ->url(fn () => route('reservations.email', $this->record), shouldOpenInNewTab: true),
         ];
     }

@@ -2,43 +2,96 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Service;
+use App\Enums\BillingUnit;
+use App\Models\Reservation;
 use App\Models\Space;
 use App\Services\AvailabilityService;
+use App\Services\PricingService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Endpoints JSON consumidos pelo front (Alpine.js) para montar a grade de horários
- * em tempo real, sem recarregar a página.
+ * Endpoints JSON consumidos pelo front (Alpine.js) para mostrar a agenda
+ * e o orçamento em tempo real, sem recarregar a página.
  */
 class AvailabilityController extends Controller
 {
-    public function __construct(private readonly AvailabilityService $availability) {}
+    public function __construct(
+        private readonly AvailabilityService $availability,
+        private readonly PricingService $pricing,
+    ) {}
 
-    public function service(Request $request, Service $service): JsonResponse
+    /** Grade de horários de um dia (espaços cobrados por hora). */
+    public function hours(Request $request, Space $space): JsonResponse
     {
-        $data = $request->validate([
-            'professional' => ['required', 'integer'],
-            'date' => ['required', 'date', 'after_or_equal:today', 'before_or_equal:'.today()->addDays(config('hotel.booking_horizon_days'))->toDateString()],
-        ]);
+        $space = $this->bookable($space);
+        abort_unless($space->billing_unit === BillingUnit::Hour, 404);
 
-        $professional = $service->professionals()->where('is_active', true)->findOrFail($data['professional']);
+        $data = $request->validate(['date' => $this->dateRule()]);
 
         return response()->json([
-            'slots' => $this->availability->professionalSlots($professional, $service, CarbonImmutable::parse($data['date'])),
+            'slots' => $this->availability->hourSlots($space, CarbonImmutable::parse($data['date'])),
         ]);
     }
 
-    public function space(Request $request, Space $space): JsonResponse
+    /** Dias livres/ocupados dentro do horizonte de reserva (espaços por dia ou por mês). */
+    public function days(Space $space): JsonResponse
     {
+        $space = $this->bookable($space);
+
+        return response()->json([
+            'days' => $this->availability->dayCalendar($space, (int) config('aurora.booking_horizon_days') + 1),
+        ]);
+    }
+
+    /** Orçamento + checagem de conflito para "início + quantidade". */
+    public function quote(Request $request, Space $space): JsonResponse
+    {
+        $space = $this->bookable($space);
+        $category = $space->category;
+        $hourly = $space->billing_unit === BillingUnit::Hour;
+
         $data = $request->validate([
-            'date' => ['required', 'date', 'after_or_equal:today', 'before_or_equal:'.today()->addDays(config('hotel.booking_horizon_days'))->toDateString()],
+            'date' => $this->dateRule(),
+            'start_hour' => [$hourly ? 'required' : 'nullable', 'integer', 'between:0,23'],
+            'quantity' => ['required', 'integer', "between:{$category->min_quantity},{$category->max_quantity}"],
+            'guests' => ['nullable', 'integer', 'min:1', "max:{$space->capacity}"],
+        ]);
+
+        $guests = (int) ($data['guests'] ?? 1);
+        $start = CarbonImmutable::parse($data['date'])->setTime($hourly ? (int) $data['start_hour'] : 0, 0);
+        [$from, $to] = $this->availability->window($space, $start, (int) $data['quantity']);
+        $quote = $this->pricing->quote($space, (int) $data['quantity'], $guests);
+
+        // Reserva "de mentira" (não salva) só para reaproveitar a formatação do período
+        $preview = new Reservation([
+            'starts_at' => $from, 'ends_at' => $to,
+            'billing_unit' => $space->billing_unit, 'quantity' => $quote['quantity'],
         ]);
 
         return response()->json([
-            'slots' => $this->availability->spaceSlots($space, CarbonImmutable::parse($data['date'])),
+            'available' => (! $hourly || $start->isFuture()) && $space->isFreeBetween($from, $to, $guests),
+            'seats_left' => $space->is_shared ? $space->seatsLeftBetween($from, $to) : null,
+            'starts_at' => $from->toIso8601String(),
+            'ends_at' => $to->toIso8601String(),
+            'period' => $preview->period_label,
+            'quantity_label' => $quote['label'],
+            'total' => $quote['total'],
         ]);
+    }
+
+    private function bookable(Space $space): Space
+    {
+        $space->loadMissing('unit', 'category');
+        abort_unless($space->isBookable(), 404);
+
+        return $space;
+    }
+
+    private function dateRule(): array
+    {
+        return ['required', 'date_format:Y-m-d', 'after_or_equal:today',
+            'before_or_equal:'.today()->addDays((int) config('aurora.booking_horizon_days'))->toDateString()];
     }
 }

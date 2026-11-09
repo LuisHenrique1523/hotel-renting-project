@@ -6,9 +6,8 @@
                 <h1 class="heading mt-2">Minhas reservas</h1>
             </div>
             <div class="flex gap-2">
-                <a href="{{ route('rooms.index') }}" class="btn-dark !px-4 !py-2.5">+ Hospedagem</a>
-                <a href="{{ route('spa.index') }}" class="btn-ghost !px-4 !py-2.5">+ Spa</a>
-                <a href="{{ route('spaces.index') }}" class="btn-ghost !px-4 !py-2.5">+ Sala</a>
+                <a href="{{ route('spaces.index') }}" class="btn-dark !px-4 !py-2.5">+ Nova reserva</a>
+                <a href="{{ route('units.index') }}" class="btn-ghost !px-4 !py-2.5">Unidades</a>
             </div>
         </div>
 
@@ -39,10 +38,10 @@
                     </a>
                 @empty
                     <div class="card flex flex-col items-center p-14 text-center">
-                        <span class="text-5xl">🌴</span>
+                        <span class="text-5xl">🗓️</span>
                         <p class="mt-4 font-display text-2xl">Nada por aqui ainda</p>
-                        <p class="mt-1 text-night-500">Que tal planejar sua próxima pausa?</p>
-                        <a href="{{ route('rooms.index') }}" class="btn-gold mt-6">Explorar acomodações</a>
+                        <p class="mt-1 text-night-500">Reserve uma sala, um dia de coworking ou um escritório.</p>
+                        <a href="{{ route('spaces.index') }}" class="btn-gold mt-6">Explorar espaços</a>
                     </div>
                 @endforelse
             </div>

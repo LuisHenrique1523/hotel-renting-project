@@ -2,21 +2,20 @@
 
 namespace App\Filament\Resources;
 
-use App\Enums\PaymentStatus;
+use App\Enums\BillingUnit;
 use App\Enums\ReservationStatus;
 use App\Exceptions\ReservationException;
 use App\Filament\Resources\ReservationResource\Pages;
-use App\Models\Professional;
 use App\Models\Reservation;
-use App\Models\Room;
-use App\Models\RoomType;
-use App\Models\Service;
 use App\Models\Space;
+use App\Models\Unit;
 use App\Models\User;
+use App\Services\PricingService;
 use App\Services\ReservationService;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
+use Filament\Forms\Set;
 use Filament\Infolists;
 use Filament\Infolists\Infolist;
 use Filament\Notifications\Notification;
@@ -26,7 +25,6 @@ use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class ReservationResource extends Resource
 {
@@ -38,21 +36,9 @@ class ReservationResource extends Resource
     protected static ?string $pluralModelLabel = 'reservas';
     protected static ?string $recordTitleAttribute = 'code';
 
-    /** Profissional enxerga apenas a própria agenda. */
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery()->with([
-            'user', 'service', 'payment',
-            'reservable' => fn (MorphTo $morph) => $morph->morphWith([Room::class => ['type'], Professional::class => ['user']]),
-        ]);
-
-        $user = auth()->user();
-        if ($user?->isProfessional()) {
-            $query->where('reservable_type', Reservation::KIND_PROFESSIONAL)
-                ->where('reservable_id', $user->professional?->id ?? 0);
-        }
-
-        return $query;
+        return parent::getEloquentQuery()->with(['user', 'payment', 'space.unit', 'space.category']);
     }
 
     public static function getNavigationBadge(): ?string
@@ -69,15 +55,17 @@ class ReservationResource extends Resource
 
     public static function getGloballySearchableAttributes(): array
     {
-        return ['code', 'user.name', 'user.email'];
+        return ['code', 'user.name', 'user.email', 'space.name'];
     }
 
     // ── Criação no balcão (telefone, walk-in) ──────────────────
 
     public static function form(Form $form): Form
     {
+        $space = fn (Get $get): ?Space => $get('space_id') ? Space::with('unit', 'category')->find($get('space_id')) : null;
+
         return $form->schema([
-            Forms\Components\Section::make('Hóspede')->schema([
+            Forms\Components\Section::make('Cliente')->schema([
                 Forms\Components\Select::make('user_id')
                     ->label('Cliente')
                     ->options(fn () => User::where('role', 'guest')->orderBy('name')->pluck('name', 'id'))
@@ -91,44 +79,50 @@ class ReservationResource extends Resource
                     ->createOptionUsing(fn (array $data) => User::create($data + ['password' => str()->random(16), 'role' => 'guest'])->id),
             ]),
 
-            Forms\Components\Section::make('O que reservar')->schema([
-                Forms\Components\ToggleButtons::make('kind')
-                    ->label('Tipo')
-                    ->options(Reservation::KINDS)
-                    ->icons(['room' => 'heroicon-o-home-modern', 'space' => 'heroicon-o-presentation-chart-bar', 'professional' => 'heroicon-o-sparkles'])
-                    ->inline()->required()->live()->default('room'),
+            Forms\Components\Section::make('O que reservar')->columns(4)->schema([
+                Forms\Components\Select::make('unit_id')->label('Unidade')
+                    ->options(fn () => Unit::active()->orderBy('name')->get()->mapWithKeys(fn (Unit $u) => [$u->id => "{$u->name} · {$u->city}"]))
+                    ->required()->live()->columnSpan(2)
+                    ->afterStateUpdated(fn (Set $set) => $set('space_id', null)),
+                Forms\Components\Select::make('space_id')->label('Espaço')
+                    ->options(fn (Get $get) => Space::bookable()->with('category')->where('unit_id', $get('unit_id'))->orderBy('name')->get()
+                        ->mapWithKeys(fn (Space $s) => [$s->id => "{$s->name} · {$s->category->name} ({$s->price_label})"]))
+                    ->disabled(fn (Get $get) => ! $get('unit_id'))
+                    ->required()->live()->searchable()->columnSpan(2)
+                    ->afterStateUpdated(fn (Set $set, Get $get) => $set('quantity', $space($get)?->category->min_quantity ?? 1)),
 
-                // Hospedagem
-                Forms\Components\Grid::make(4)->visible(fn (Get $get) => $get('kind') === 'room')->schema([
-                    Forms\Components\Select::make('room_type_id')->label('Categoria')->options(RoomType::orderBy('base_price')->pluck('name', 'id'))->required()->columnSpan(2),
-                    Forms\Components\DatePicker::make('check_in')->label('Check-in')->native(false)->displayFormat('d/m/Y')->minDate(today())->required(),
-                    Forms\Components\DatePicker::make('check_out')->label('Check-out')->native(false)->displayFormat('d/m/Y')->after('check_in')->required(),
-                ]),
+                Forms\Components\DatePicker::make('date')
+                    ->label(fn (Get $get) => $space($get)?->billing_unit === BillingUnit::Hour ? 'Data' : 'Data de início')
+                    ->native(false)->displayFormat('d/m/Y')->minDate(today())->required()->live(),
+                Forms\Components\Select::make('start_hour')->label('Horário de início')
+                    ->options(function (Get $get) use ($space) {
+                        $unit = $space($get)?->unit;
 
-                // Sala
-                Forms\Components\Grid::make(4)->visible(fn (Get $get) => $get('kind') === 'space')->schema([
-                    Forms\Components\Select::make('space_id')->label('Espaço')->options(Space::pluck('name', 'id'))->required()->columnSpan(2),
-                    Forms\Components\DateTimePicker::make('space_start')->label('Início')->native(false)->seconds(false)->minutesStep(60)->displayFormat('d/m/Y H:i')->required(),
-                    Forms\Components\DateTimePicker::make('space_end')->label('Fim')->native(false)->seconds(false)->minutesStep(60)->displayFormat('d/m/Y H:i')->after('space_start')->required(),
-                ]),
+                        return $unit ? collect(range($unit->opens_hour, $unit->closes_hour - 1))->mapWithKeys(fn ($h) => [$h => sprintf('%02d:00', $h)]) : [];
+                    })
+                    ->visible(fn (Get $get) => $space($get)?->billing_unit === BillingUnit::Hour)
+                    ->required()->live(),
+                Forms\Components\TextInput::make('quantity')->label('Duração')->numeric()->required()->default(1)->live(onBlur: true)
+                    ->minValue(fn (Get $get) => $space($get)?->category->min_quantity ?? 1)
+                    ->maxValue(fn (Get $get) => $space($get)?->category->max_quantity ?? 365)
+                    ->suffix(fn (Get $get) => $space($get)?->billing_unit->unitName()),
+                Forms\Components\TextInput::make('guests')->numeric()->minValue(1)->default(1)->required()->live(onBlur: true)
+                    ->label(fn (Get $get) => $space($get)?->is_shared ? 'Vagas (pessoas)' : 'Pessoas')
+                    ->maxValue(fn (Get $get) => $space($get)?->capacity ?? 1000),
 
-                // Spa / profissional
-                Forms\Components\Grid::make(4)->visible(fn (Get $get) => $get('kind') === 'professional')->schema([
-                    Forms\Components\Select::make('service_id')->label('Serviço')->options(Service::pluck('name', 'id'))->required()->live(),
-                    Forms\Components\Select::make('professional_id')->label('Profissional')
-                        ->options(fn (Get $get) => Professional::with('user')
-                            ->when($get('service_id'), fn ($q, $id) => $q->whereHas('services', fn ($s) => $s->whereKey($id)))
-                            ->get()->pluck('name', 'id'))
-                        ->required(),
-                    Forms\Components\DateTimePicker::make('service_start')->label('Horário')->native(false)->seconds(false)->minutesStep(30)->displayFormat('d/m/Y H:i')->required()->columnSpan(2),
-                ]),
+                Forms\Components\Placeholder::make('estimate')->label('Valor estimado')->columnSpanFull()
+                    ->content(function (Get $get) use ($space) {
+                        $s = $space($get);
+                        if (! $s || ! $get('quantity')) {
+                            return 'Escolha o espaço e a duração.';
+                        }
+                        $q = app(PricingService::class)->quote($s, (int) $get('quantity'), (int) ($get('guests') ?: 1));
 
-                Forms\Components\Grid::make(4)->schema([
-                    Forms\Components\TextInput::make('guests')->label('Pessoas')->numeric()->minValue(1)->default(1)->required()
-                        ->hidden(fn (Get $get) => $get('kind') === 'professional'),
-                    Forms\Components\Textarea::make('notes')->label('Observações')->rows(2)->columnSpan(3),
-                ]),
-                Forms\Components\Toggle::make('confirm_now')->label('Pagamento recebido no balcão (confirmar agora)')->default(true),
+                        return 'R$ '.number_format($q['total'], 2, ',', '.').' · '.$q['label'].($s->is_shared ? " · {$q['guests']} ".($q['guests'] === 1 ? 'pessoa' : 'pessoas') : '');
+                    }),
+
+                Forms\Components\Textarea::make('notes')->label('Observações')->rows(2)->columnSpanFull(),
+                Forms\Components\Toggle::make('confirm_now')->label('Pagamento recebido no balcão (confirmar agora)')->default(true)->columnSpanFull(),
             ]),
         ]);
     }
@@ -142,16 +136,15 @@ class ReservationResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('code')->label('Código')->searchable()->copyable()
                     ->fontFamily(FontFamily::Mono)->weight(FontWeight::SemiBold),
-                Tables\Columns\TextColumn::make('reservable_type')->label('Tipo')->badge()
-                    ->formatStateUsing(fn (string $state) => Reservation::KINDS[$state] ?? $state)
-                    ->color(fn (string $state) => match ($state) { 'room' => 'gray', 'space' => 'info', default => 'primary' })
-                    ->icon(fn (string $state) => match ($state) { 'room' => 'heroicon-m-home-modern', 'space' => 'heroicon-m-presentation-chart-bar', default => 'heroicon-m-sparkles' }),
-                Tables\Columns\TextColumn::make('title')->label('Recurso')
+                Tables\Columns\TextColumn::make('space.name')->label('Espaço')->searchable()
                     ->description(fn (Reservation $record) => $record->subtitle),
-                Tables\Columns\TextColumn::make('user.name')->label('Hóspede')->searchable()
+                Tables\Columns\TextColumn::make('kind_label')->label('Categoria')->badge()
+                    ->color(fn (Reservation $record) => $record->billing_unit->getColor())
+                    ->icon(fn (Reservation $record) => $record->billing_unit->getIcon()),
+                Tables\Columns\TextColumn::make('user.name')->label('Cliente')->searchable()
                     ->description(fn (Reservation $record) => $record->user?->email),
                 Tables\Columns\TextColumn::make('starts_at')->label('Início')->dateTime('d/m/Y H:i')->sortable()
-                    ->description(fn (Reservation $record) => $record->starts_at->diffForHumans()),
+                    ->description(fn (Reservation $record) => $record->quantity_label),
                 Tables\Columns\TextColumn::make('ends_at')->label('Fim')->dateTime('d/m/Y H:i')->sortable()->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('total')->label('Total')->money('BRL', locale: 'pt_BR')->sortable()
                     ->summarize(Tables\Columns\Summarizers\Sum::make()->label('Soma')->money('BRL', locale: 'pt_BR')),
@@ -160,15 +153,21 @@ class ReservationResource extends Resource
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')->label('Status')->options(ReservationStatus::class)->multiple(),
-                Tables\Filters\SelectFilter::make('reservable_type')->label('Tipo')->options(Reservation::KINDS),
+                Tables\Filters\SelectFilter::make('unit')->label('Unidade')
+                    ->options(fn () => Unit::orderBy('name')->pluck('name', 'id'))
+                    ->query(fn (Builder $query, array $data) => $query->when($data['value'], fn ($q, $id) => $q->inUnit((int) $id))),
+                Tables\Filters\SelectFilter::make('category')->label('Categoria')
+                    ->options(fn () => \App\Models\SpaceCategory::ordered()->pluck('name', 'id'))
+                    ->query(fn (Builder $query, array $data) => $query->when($data['value'], fn ($q, $id) => $q->whereHas('space', fn ($s) => $s->where('space_category_id', $id)))),
+                Tables\Filters\SelectFilter::make('billing_unit')->label('Cobrança')->options(BillingUnit::class),
                 Tables\Filters\Filter::make('today')->label('Começam hoje')->toggle()
-                    ->query(fn (Builder $q) => $q->whereDate('starts_at', today())),
+                    ->query(fn (Builder $query) => $query->whereDate('starts_at', today())),
                 Tables\Filters\Filter::make('period')->label('Período')
                     ->form([
                         Forms\Components\DatePicker::make('from')->label('De'),
                         Forms\Components\DatePicker::make('until')->label('Até'),
                     ])
-                    ->query(fn (Builder $q, array $data) => $q
+                    ->query(fn (Builder $query, array $data) => $query
                         ->when($data['from'], fn ($q, $d) => $q->whereDate('starts_at', '>=', $d))
                         ->when($data['until'], fn ($q, $d) => $q->whereDate('starts_at', '<=', $d))),
             ])
@@ -213,7 +212,7 @@ class ReservationResource extends Resource
                 ->visible(fn (Reservation $record) => $can($record, ReservationStatus::CheckedIn) && $record->starts_at->startOfDay()->lte(now()))
                 ->action(fn (Reservation $record) => $run($record, 'checkIn', 'Check-in realizado')),
 
-            $actionClass::make('checkOut')->label('Concluir / check-out')->icon('heroicon-o-flag')->color('gray')
+            $actionClass::make('checkOut')->label('Concluir')->icon('heroicon-o-flag')->color('gray')
                 ->visible(fn (Reservation $record) => $can($record, ReservationStatus::Completed))
                 ->action(fn (Reservation $record) => $run($record, 'checkOut', 'Reserva concluída')),
 
@@ -224,7 +223,7 @@ class ReservationResource extends Resource
 
             $actionClass::make('cancel')->label('Cancelar')->icon('heroicon-o-x-circle')->color('danger')
                 ->visible(fn (Reservation $record) => $can($record, ReservationStatus::Cancelled))
-                ->requiresConfirmation()->modalDescription('O horário será liberado e, se pago, o valor será estornado.')
+                ->requiresConfirmation()->modalDescription('O período será liberado e, se pago, o valor será estornado.')
                 ->action(function (Reservation $record) {
                     try {
                         app(ReservationService::class)->cancel($record, auth()->user());
@@ -254,15 +253,17 @@ class ReservationResource extends Resource
                             Infolists\Components\TextEntry::make('guests')->label('Pessoas'),
                         ]),
                         Infolists\Components\Group::make([
-                            Infolists\Components\TextEntry::make('starts_at')->label('Início')->dateTime('d/m/Y \à\s H:i'),
-                            Infolists\Components\TextEntry::make('ends_at')->label('Fim')->dateTime('d/m/Y \à\s H:i'),
+                            Infolists\Components\TextEntry::make('period_label')->label('Período'),
+                            Infolists\Components\TextEntry::make('unit_price')->label('Valor unitário')
+                                ->formatStateUsing(fn (Reservation $record) => 'R$ '.number_format((float) $record->unit_price, 2, ',', '.').$record->billing_unit->suffix()),
                             Infolists\Components\TextEntry::make('total')->label('Total')->money('BRL', locale: 'pt_BR')->size('lg')->weight(FontWeight::Bold),
                         ]),
-                        Infolists\Components\TextEntry::make('notes')->label('Observações do hóspede')->placeholder('Nenhuma')->columnSpanFull(),
+                        Infolists\Components\TextEntry::make('space.unit.full_address')->label('Endereço da unidade')->columnSpanFull(),
+                        Infolists\Components\TextEntry::make('notes')->label('Observações do cliente')->placeholder('Nenhuma')->columnSpanFull(),
                     ]),
 
                 Infolists\Components\Group::make([
-                    Infolists\Components\Section::make('Hóspede')->icon('heroicon-o-user')->schema([
+                    Infolists\Components\Section::make('Cliente')->icon('heroicon-o-user')->schema([
                         Infolists\Components\TextEntry::make('user.name')->label('Nome')->weight(FontWeight::SemiBold),
                         Infolists\Components\TextEntry::make('user.email')->label('E-mail')->copyable(),
                         Infolists\Components\TextEntry::make('user.phone')->label('Telefone')->placeholder('—'),

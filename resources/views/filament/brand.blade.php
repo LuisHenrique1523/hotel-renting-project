@@ -7,6 +7,6 @@
     </svg>
     <span class="leading-none">
         <span class="aurora-brand-word block font-display text-xl font-semibold tracking-[0.18em]">AURORA</span>
-        <span class="block text-[0.58rem] font-medium uppercase tracking-[0.42em] text-gold-500">Hotel &amp; Spa</span>
+        <span class="block text-[0.58rem] font-medium uppercase tracking-[0.42em] text-gold-500">Workspaces</span>
     </span>
 </span>

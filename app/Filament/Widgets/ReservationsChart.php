@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Enums\BillingUnit;
 use App\Models\Reservation;
 use Carbon\CarbonImmutable;
 use Filament\Widgets\ChartWidget;
@@ -9,7 +10,7 @@ use Filament\Widgets\ChartWidget;
 class ReservationsChart extends ChartWidget
 {
     protected static ?string $heading = 'Reservas por dia';
-    protected static ?string $description = 'Últimos 14 dias e próximos 14 dias, por tipo';
+    protected static ?string $description = 'Últimos 14 dias e próximos 14 dias, por forma de cobrança';
     protected static ?int $sort = 2;
     protected static ?string $maxHeight = '280px';
     protected int|string|array $columnSpan = ['md' => 2];
@@ -26,19 +27,24 @@ class ReservationsChart extends ChartWidget
 
         $counts = Reservation::blocking()
             ->whereBetween('starts_at', [$start, $start->addDays(29)])
-            ->selectRaw('DATE(starts_at) as day, reservable_type, COUNT(*) as total')
-            ->groupBy('day', 'reservable_type')
+            ->selectRaw('DATE(starts_at) as day, billing_unit, COUNT(*) as total')
+            ->groupBy('day', 'billing_unit')
             ->get()
-            ->groupBy('reservable_type');
+            ->groupBy(fn ($row) => $row->billing_unit->value);
 
-        $series = fn (string $kind) => $days->map(fn ($d) => (int) ($counts->get($kind)?->firstWhere('day', $d->toDateString())?->total ?? 0))->all();
+        $series = fn (BillingUnit $unit) => $days->map(fn ($d) => (int) ($counts->get($unit->value)?->firstWhere('day', $d->toDateString())?->total ?? 0))->all();
+        $labels = [BillingUnit::Hour->value => 'Por hora', BillingUnit::Day->value => 'Por dia', BillingUnit::Month->value => 'Contratos mensais (início)'];
 
         return [
-            'datasets' => [
-                ['label' => 'Spa & Serviços', 'data' => $series('professional'), 'borderColor' => '#C8A15A', 'backgroundColor' => 'rgba(200,161,90,.15)', 'fill' => true, 'tension' => 0.35, 'pointRadius' => 0],
-                ['label' => 'Salas', 'data' => $series('space'), 'borderColor' => '#0EA5E9', 'backgroundColor' => 'rgba(14,165,233,.08)', 'fill' => true, 'tension' => 0.35, 'pointRadius' => 0],
-                ['label' => 'Hospedagem (check-ins)', 'data' => $series('room'), 'borderColor' => '#2B3F5C', 'backgroundColor' => 'rgba(43,63,92,.08)', 'fill' => true, 'tension' => 0.35, 'pointRadius' => 0],
-            ],
+            'datasets' => collect(BillingUnit::cases())->map(fn (BillingUnit $unit) => [
+                'label' => $labels[$unit->value],
+                'data' => $series($unit),
+                'borderColor' => $unit->hex(),
+                'backgroundColor' => $unit->hex().'22',
+                'fill' => true,
+                'tension' => 0.35,
+                'pointRadius' => 0,
+            ])->all(),
             'labels' => $days->map(fn ($d) => $d->isToday() ? 'Hoje' : $d->format('d/m'))->all(),
         ];
     }
