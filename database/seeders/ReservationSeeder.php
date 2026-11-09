@@ -154,8 +154,8 @@ class ReservationSeeder extends Seeder
             $createdAt = $this->now->subMinutes(mt_rand(1, 20)); // pendentes são sempre recentes
         }
 
+        // Sem 'code': o modelo gera um código e confere se ele já existe (evita colisão de UNIQUE)
         $reservation = new Reservation([
-            'code' => 'AUR-'.Str::upper(Str::random(5)),
             'user_id' => $this->guests->random()->id,
             'space_id' => $space->id,
             'billing_unit' => $space->billing_unit,
